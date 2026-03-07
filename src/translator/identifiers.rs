@@ -24,10 +24,8 @@ pub fn strip_qualifiers(sql: &str, use_schema_prefix: bool) -> String {
         .expect("valid three-part identifier regex")
     });
     static RE_TWO_PART: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(
-            r#"(?i)("?[A-Za-z_][A-Za-z0-9_$]*"?)\s*\.\s*("?[A-Za-z_][A-Za-z0-9_$]*"?)"#,
-        )
-        .expect("valid two-part identifier regex")
+        Regex::new(r#"(?i)("?[A-Za-z_][A-Za-z0-9_$]*"?)\s*\.\s*("?[A-Za-z_][A-Za-z0-9_$]*"?)"#)
+            .expect("valid two-part identifier regex")
     });
 
     // Strip three-part qualifiers first

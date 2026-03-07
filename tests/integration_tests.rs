@@ -72,7 +72,9 @@ fn nvl_function() {
     c.execute("INSERT INTO t VALUES (NULL)", &[]).unwrap();
     c.execute("INSERT INTO t VALUES (42)", &[]).unwrap();
 
-    let rows = c.query("SELECT NVL(val, 0) FROM t ORDER BY val", &[]).unwrap();
+    let rows = c
+        .query("SELECT NVL(val, 0) FROM t ORDER BY val", &[])
+        .unwrap();
     assert_eq!(rows.len(), 2);
     // NULL row comes first (ORDER BY NULL first in SQLite)
     let vals: Vec<i64> = rows.iter().map(|r| r.get(0).unwrap()).collect();
@@ -88,7 +90,10 @@ fn iff_function() {
     c.execute("INSERT INTO t VALUES (200.0)", &[]).unwrap();
 
     let rows = c
-        .query("SELECT IFF(amount > 100, 'large', 'small') FROM t ORDER BY amount", &[])
+        .query(
+            "SELECT IFF(amount > 100, 'large', 'small') FROM t ORDER BY amount",
+            &[],
+        )
         .unwrap();
 
     assert_eq!(rows[0].get::<String>(0).unwrap(), "small");
@@ -124,7 +129,10 @@ fn nvl2_function() {
     c.execute("INSERT INTO t VALUES (NULL)", &[]).unwrap();
 
     let rows = c
-        .query("SELECT NVL2(x, 'not null', 'is null') FROM t ORDER BY x", &[])
+        .query(
+            "SELECT NVL2(x, 'not null', 'is null') FROM t ORDER BY x",
+            &[],
+        )
         .unwrap();
     let values: Vec<String> = rows.iter().map(|r| r.get(0).unwrap()).collect();
     assert!(values.contains(&"not null".to_owned()));
@@ -135,10 +143,7 @@ fn nvl2_function() {
 fn dateadd_function() {
     let c = conn();
     let rows = c
-        .query(
-            "SELECT DATEADD(day, 7, '2024-01-01')",
-            &[],
-        )
+        .query("SELECT DATEADD(day, 7, '2024-01-01')", &[])
         .unwrap();
     let result: String = rows[0].get(0).unwrap();
     assert_eq!(result, "2024-01-08");
@@ -205,9 +210,7 @@ fn startswith_function() {
 #[test]
 fn array_size_function() {
     let c = conn();
-    let rows = c
-        .query("SELECT ARRAY_SIZE('[1,2,3,4,5]')", &[])
-        .unwrap();
+    let rows = c.query("SELECT ARRAY_SIZE('[1,2,3,4,5]')", &[]).unwrap();
     let result: i64 = rows[0].get(0).unwrap();
     assert_eq!(result, 5);
 }
@@ -217,16 +220,15 @@ fn array_size_function() {
 #[test]
 fn semi_structured_colon_path() {
     let c = conn();
-    c.execute("CREATE TABLE events (data VARIANT)", &[]).unwrap();
+    c.execute("CREATE TABLE events (data VARIANT)", &[])
+        .unwrap();
     c.execute(
         "INSERT INTO events VALUES (?)",
         &[&r#"{"user_id": 42, "action": "click"}"#],
     )
     .unwrap();
 
-    let rows = c
-        .query("SELECT data:user_id FROM events", &[])
-        .unwrap();
+    let rows = c.query("SELECT data:user_id FROM events", &[]).unwrap();
     let user_id: String = rows[0].get(0).unwrap();
     assert_eq!(user_id, "42");
 }
@@ -236,12 +238,12 @@ fn semi_structured_colon_path() {
 #[test]
 fn fully_qualified_identifier_stripped() {
     let c = conn();
-    c.execute("CREATE TABLE products (id INTEGER, name TEXT)", &[]).unwrap();
-    c.execute("INSERT INTO products VALUES (1, 'foo')", &[]).unwrap();
-
-    let rows = c
-        .query("SELECT * FROM mydb.public.products", &[])
+    c.execute("CREATE TABLE products (id INTEGER, name TEXT)", &[])
         .unwrap();
+    c.execute("INSERT INTO products VALUES (1, 'foo')", &[])
+        .unwrap();
+
+    let rows = c.query("SELECT * FROM mydb.public.products", &[]).unwrap();
     assert_eq!(rows.len(), 1);
 }
 
@@ -252,7 +254,8 @@ fn noop_statements_are_ignored() {
     let c = conn();
     // These should not error
     c.execute("USE DATABASE test_db", &[]).unwrap();
-    c.execute("ALTER SESSION SET QUERY_TAG = 'test'", &[]).unwrap();
+    c.execute("ALTER SESSION SET QUERY_TAG = 'test'", &[])
+        .unwrap();
     c.execute("USE WAREHOUSE compute_wh", &[]).unwrap();
     c.execute("SHOW TABLES", &[]).unwrap();
 }
@@ -262,7 +265,8 @@ fn noop_statements_are_ignored() {
 #[test]
 fn row_get_by_name() {
     let c = conn();
-    c.execute("CREATE TABLE t (id INTEGER, name TEXT)", &[]).unwrap();
+    c.execute("CREATE TABLE t (id INTEGER, name TEXT)", &[])
+        .unwrap();
     c.execute("INSERT INTO t VALUES (1, 'Alice')", &[]).unwrap();
 
     let rows = c.query("SELECT id, name FROM t", &[]).unwrap();

@@ -127,22 +127,14 @@ impl Connection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn query(
-        &self,
-        sql: &str,
-        params: &[&dyn rusqlite::types::ToSql],
-    ) -> Result<Vec<Row>> {
+    pub fn query(&self, sql: &str, params: &[&dyn rusqlite::types::ToSql]) -> Result<Vec<Row>> {
         let translated = match self.translator.translate(sql)? {
             None => return Ok(vec![]),
             Some(t) => t,
         };
 
         let mut stmt = self.inner.prepare(&translated)?;
-        let column_names: Vec<String> = stmt
-            .column_names()
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let column_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
 
         let rows = stmt
             .query_map(params, |row| {
@@ -234,38 +226,56 @@ fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
     use rusqlite::functions::FunctionFlags;
 
     // REGEXP support (used by REGEXP_LIKE / RLIKE)
-    conn.create_scalar_function("regexp", 2, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
-        let pattern: String = ctx.get(0)?;
-        let text: String = ctx.get(1)?;
-        let re = regex::Regex::new(&pattern).map_err(|e| {
-            rusqlite::Error::UserFunctionError(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                e.to_string(),
-            )))
-        })?;
-        Ok(re.is_match(&text))
-    })?;
+    conn.create_scalar_function(
+        "regexp",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let pattern: String = ctx.get(0)?;
+            let text: String = ctx.get(1)?;
+            let re = regex::Regex::new(&pattern).map_err(|e| {
+                rusqlite::Error::UserFunctionError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    e.to_string(),
+                )))
+            })?;
+            Ok(re.is_match(&text))
+        },
+    )?;
 
     // SPLIT_PART(string, delimiter, part_number)
-    conn.create_scalar_function("split_part", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
-        let s: String = ctx.get(0)?;
-        let delim: String = ctx.get(1)?;
-        let n: i64 = ctx.get(2)?;
-        let parts: Vec<&str> = s.split(delim.as_str()).collect();
-        let idx = if n > 0 { (n - 1) as usize } else { 0 };
-        Ok(parts.get(idx).map(|s| s.to_string()).unwrap_or_default())
-    })?;
+    conn.create_scalar_function(
+        "split_part",
+        3,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let s: String = ctx.get(0)?;
+            let delim: String = ctx.get(1)?;
+            let n: i64 = ctx.get(2)?;
+            let parts: Vec<&str> = s.split(delim.as_str()).collect();
+            let idx = if n > 0 { (n - 1) as usize } else { 0 };
+            Ok(parts.get(idx).map(|s| s.to_string()).unwrap_or_default())
+        },
+    )?;
 
     // STRTOK(string, delimiters, part_number)
-    conn.create_scalar_function("strtok", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
-        let s: String = ctx.get(0)?;
-        let delims: String = ctx.get(1)?;
-        let n: i64 = ctx.get(2)?;
-        let delim_chars: Vec<char> = delims.chars().collect();
-        let parts: Vec<&str> = s.split(|c| delim_chars.contains(&c)).filter(|p| !p.is_empty()).collect();
-        let idx = if n > 0 { (n - 1) as usize } else { 0 };
-        Ok(parts.get(idx).map(|s| s.to_string()).unwrap_or_default())
-    })?;
+    conn.create_scalar_function(
+        "strtok",
+        3,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let s: String = ctx.get(0)?;
+            let delims: String = ctx.get(1)?;
+            let n: i64 = ctx.get(2)?;
+            let delim_chars: Vec<char> = delims.chars().collect();
+            let parts: Vec<&str> = s
+                .split(|c| delim_chars.contains(&c))
+                .filter(|p| !p.is_empty())
+                .collect();
+            let idx = if n > 0 { (n - 1) as usize } else { 0 };
+            Ok(parts.get(idx).map(|s| s.to_string()).unwrap_or_default())
+        },
+    )?;
 
     // OBJECT_CONSTRUCT(k1, v1, k2, v2, ...)  — variadic version
     conn.create_scalar_function("object_construct", -1, FunctionFlags::SQLITE_UTF8, |ctx| {
@@ -293,31 +303,49 @@ fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
     })?;
 
     // GET_PATH(variant_col, path_string)
-    conn.create_scalar_function("get_path", 2, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
-        let json_str: String = ctx.get(0)?;
-        let path: String = ctx.get(1)?;
-        let json: serde_json::Value = serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
-        let result = path
-            .split('.')
-            .fold(&json, |acc, key| acc.get(key).unwrap_or(&serde_json::Value::Null));
-        Ok(result.to_string())
-    })?;
+    conn.create_scalar_function(
+        "get_path",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            let path: String = ctx.get(1)?;
+            let json: serde_json::Value =
+                serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
+            let result = path.split('.').fold(&json, |acc, key| {
+                acc.get(key).unwrap_or(&serde_json::Value::Null)
+            });
+            Ok(result.to_string())
+        },
+    )?;
 
     // AS_OBJECT / AS_ARRAY / AS_VARCHAR — passthrough for VARIANT casts
-    conn.create_scalar_function("as_object", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
-        ctx.get::<String>(0)
-    })?;
-    conn.create_scalar_function("as_array", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
-        ctx.get::<String>(0)
-    })?;
-    conn.create_scalar_function("as_varchar", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
-        ctx.get::<String>(0)
-    })?;
+    conn.create_scalar_function(
+        "as_object",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| ctx.get::<String>(0),
+    )?;
+    conn.create_scalar_function(
+        "as_array",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| ctx.get::<String>(0),
+    )?;
+    conn.create_scalar_function(
+        "as_varchar",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| ctx.get::<String>(0),
+    )?;
 
     // TRY_PARSE_JSON — same as passthrough for local testing
-    conn.create_scalar_function("try_parse_json", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
-        ctx.get::<Option<String>>(0)
-    })?;
+    conn.create_scalar_function(
+        "try_parse_json",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| ctx.get::<Option<String>>(0),
+    )?;
 
     Ok(())
 }
@@ -328,7 +356,9 @@ fn sqlite_value_ref_to_json(val: rusqlite::types::Value) -> serde_json::Value {
         rusqlite::types::Value::Integer(i) => serde_json::Value::Number(i.into()),
         rusqlite::types::Value::Real(r) => serde_json::json!(r),
         rusqlite::types::Value::Text(s) => serde_json::Value::String(s),
-        rusqlite::types::Value::Blob(b) => serde_json::Value::String(format!("<{} bytes>", b.len())),
+        rusqlite::types::Value::Blob(b) => {
+            serde_json::Value::String(format!("<{} bytes>", b.len()))
+        }
     }
 }
 

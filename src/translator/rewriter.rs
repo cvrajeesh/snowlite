@@ -56,7 +56,10 @@ impl Translator {
     pub fn translate(&self, sql: &str) -> Result<Option<String>> {
         let trimmed = sql.trim();
         if noop::is_noop(trimmed) {
-            log::debug!("Dropping no-op statement: {}", &trimmed[..trimmed.len().min(80)]);
+            log::debug!(
+                "Dropping no-op statement: {}",
+                &trimmed[..trimmed.len().min(80)]
+            );
             return Ok(None);
         }
 
@@ -194,7 +197,12 @@ pub fn split_statements(sql: &str) -> Vec<&str> {
 
     while i < len {
         match bytes[i] {
-            b'-' if !in_single && !in_double && !in_block_comment && i + 1 < len && bytes[i + 1] == b'-' => {
+            b'-' if !in_single
+                && !in_double
+                && !in_block_comment
+                && i + 1 < len
+                && bytes[i + 1] == b'-' =>
+            {
                 in_line_comment = true;
                 i += 2;
                 continue;
@@ -202,7 +210,12 @@ pub fn split_statements(sql: &str) -> Vec<&str> {
             b'\n' if in_line_comment => {
                 in_line_comment = false;
             }
-            b'/' if !in_single && !in_double && !in_line_comment && i + 1 < len && bytes[i + 1] == b'*' => {
+            b'/' if !in_single
+                && !in_double
+                && !in_line_comment
+                && i + 1 < len
+                && bytes[i + 1] == b'*' =>
+            {
                 in_block_comment = true;
                 i += 2;
                 continue;
@@ -247,7 +260,10 @@ mod tests {
 
     #[test]
     fn noop_use_database() {
-        assert!(translator().translate("USE DATABASE mydb").unwrap().is_none());
+        assert!(translator()
+            .translate("USE DATABASE mydb")
+            .unwrap()
+            .is_none());
     }
 
     #[test]

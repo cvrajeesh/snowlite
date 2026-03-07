@@ -38,13 +38,9 @@ fn rewrite_number_type(sql: &str) -> String {
     });
 
     // First replace NUMBER(p, s>0) → REAL
-    let sql = RE_NUMBER_WITH_SCALE
-        .replace_all(sql, "REAL")
-        .into_owned();
+    let sql = RE_NUMBER_WITH_SCALE.replace_all(sql, "REAL").into_owned();
     // Then replace NUMBER(p) / NUMBER(p,0) / NUMBER → INTEGER
-    RE_NUMBER_NO_SCALE
-        .replace_all(&sql, "INTEGER")
-        .into_owned()
+    RE_NUMBER_NO_SCALE.replace_all(&sql, "INTEGER").into_owned()
 }
 
 /// Rewrite non-parameterised and simply-parameterised types.

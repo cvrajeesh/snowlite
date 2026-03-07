@@ -84,23 +84,65 @@ static SIMPLE_RULES: Lazy<Vec<Rule>> = Lazy::new(|| {
         Rule::new(r"(?i)\bLOCALTIMESTAMP\s*\(\s*\)", "DATETIME('now')"),
         Rule::new(r"(?i)\bLOCALTIME\s*\(\s*\)", "TIME('now')"),
         // Date part extraction
-        Rule::new(r"(?i)\bYEAR\s*\(([^)]+)\)", "CAST(STRFTIME('%Y', $1) AS INTEGER)"),
-        Rule::new(r"(?i)\bMONTH\s*\(([^)]+)\)", "CAST(STRFTIME('%m', $1) AS INTEGER)"),
-        Rule::new(r"(?i)\bDAY\s*\(([^)]+)\)", "CAST(STRFTIME('%d', $1) AS INTEGER)"),
-        Rule::new(r"(?i)\bHOUR\s*\(([^)]+)\)", "CAST(STRFTIME('%H', $1) AS INTEGER)"),
-        Rule::new(r"(?i)\bMINUTE\s*\(([^)]+)\)", "CAST(STRFTIME('%M', $1) AS INTEGER)"),
-        Rule::new(r"(?i)\bSECOND\s*\(([^)]+)\)", "CAST(STRFTIME('%S', $1) AS INTEGER)"),
-        Rule::new(r"(?i)\bDAYOFWEEK\s*\(([^)]+)\)", "CAST(STRFTIME('%w', $1) AS INTEGER)"),
-        Rule::new(r"(?i)\bDAYOFYEAR\s*\(([^)]+)\)", "CAST(STRFTIME('%j', $1) AS INTEGER)"),
-        Rule::new(r"(?i)\bWEEKOFYEAR\s*\(([^)]+)\)", "CAST(STRFTIME('%W', $1) AS INTEGER)"),
-        Rule::new(r"(?i)\bQUARTER\s*\(([^)]+)\)", "((CAST(STRFTIME('%m', $1) AS INTEGER) + 2) / 3)"),
+        Rule::new(
+            r"(?i)\bYEAR\s*\(([^)]+)\)",
+            "CAST(STRFTIME('%Y', $1) AS INTEGER)",
+        ),
+        Rule::new(
+            r"(?i)\bMONTH\s*\(([^)]+)\)",
+            "CAST(STRFTIME('%m', $1) AS INTEGER)",
+        ),
+        Rule::new(
+            r"(?i)\bDAY\s*\(([^)]+)\)",
+            "CAST(STRFTIME('%d', $1) AS INTEGER)",
+        ),
+        Rule::new(
+            r"(?i)\bHOUR\s*\(([^)]+)\)",
+            "CAST(STRFTIME('%H', $1) AS INTEGER)",
+        ),
+        Rule::new(
+            r"(?i)\bMINUTE\s*\(([^)]+)\)",
+            "CAST(STRFTIME('%M', $1) AS INTEGER)",
+        ),
+        Rule::new(
+            r"(?i)\bSECOND\s*\(([^)]+)\)",
+            "CAST(STRFTIME('%S', $1) AS INTEGER)",
+        ),
+        Rule::new(
+            r"(?i)\bDAYOFWEEK\s*\(([^)]+)\)",
+            "CAST(STRFTIME('%w', $1) AS INTEGER)",
+        ),
+        Rule::new(
+            r"(?i)\bDAYOFYEAR\s*\(([^)]+)\)",
+            "CAST(STRFTIME('%j', $1) AS INTEGER)",
+        ),
+        Rule::new(
+            r"(?i)\bWEEKOFYEAR\s*\(([^)]+)\)",
+            "CAST(STRFTIME('%W', $1) AS INTEGER)",
+        ),
+        Rule::new(
+            r"(?i)\bQUARTER\s*\(([^)]+)\)",
+            "((CAST(STRFTIME('%m', $1) AS INTEGER) + 2) / 3)",
+        ),
         // String functions
-        Rule::new(r"(?i)\bCONTAINS\s*\(([^,]+),\s*([^)]+)\)", "(INSTR($1, $2) > 0)"),
-        Rule::new(r"(?i)\bSTARTSWITH\s*\(([^,]+),\s*([^)]+)\)", "($1 LIKE $2 || '%')"),
-        Rule::new(r"(?i)\bENDSWITH\s*\(([^,]+),\s*([^)]+)\)", "($1 LIKE '%' || $2)"),
+        Rule::new(
+            r"(?i)\bCONTAINS\s*\(([^,]+),\s*([^)]+)\)",
+            "(INSTR($1, $2) > 0)",
+        ),
+        Rule::new(
+            r"(?i)\bSTARTSWITH\s*\(([^,]+),\s*([^)]+)\)",
+            "($1 LIKE $2 || '%')",
+        ),
+        Rule::new(
+            r"(?i)\bENDSWITH\s*\(([^,]+),\s*([^)]+)\)",
+            "($1 LIKE '%' || $2)",
+        ),
         Rule::new(r"(?i)\bCHARINDEX\s*\(([^,]+),\s*([^)]+)\)", "INSTR($2, $1)"),
         Rule::new(r"(?i)\bINSTRSPACE\s*\(([^)]+)\)", "INSTR($1)"),
-        Rule::new(r"(?i)\bSPACE\s*\(([^)]+)\)", "SUBSTR('                                ', 1, $1)"),
+        Rule::new(
+            r"(?i)\bSPACE\s*\(([^)]+)\)",
+            "SUBSTR('                                ', 1, $1)",
+        ),
         Rule::new(r"(?i)\bSTRPOS\s*\(([^,]+),\s*([^)]+)\)", "INSTR($1, $2)"),
         Rule::new(r"(?i)\bLTRIM\s*\(([^,)]+)\)", "LTRIM($1)"),
         Rule::new(r"(?i)\bRTRIM\s*\(([^,)]+)\)", "RTRIM($1)"),
@@ -108,10 +150,19 @@ static SIMPLE_RULES: Lazy<Vec<Rule>> = Lazy::new(|| {
         Rule::new(r"(?i)\bBITOR\s*\(([^,]+),\s*([^)]+)\)", "($1 | $2)"),
         Rule::new(r"(?i)\bBITXOR\s*\(([^,]+),\s*([^)]+)\)", "($1 ^ $2)"),
         Rule::new(r"(?i)\bBITSHIFTLEFT\s*\(([^,]+),\s*([^)]+)\)", "($1 << $2)"),
-        Rule::new(r"(?i)\bBITSHIFTRIGHT\s*\(([^,]+),\s*([^)]+)\)", "($1 >> $2)"),
+        Rule::new(
+            r"(?i)\bBITSHIFTRIGHT\s*\(([^,]+),\s*([^)]+)\)",
+            "($1 >> $2)",
+        ),
         // Math
-        Rule::new(r"(?i)\bDIV0\s*\(([^,]+),\s*([^)]+)\)", "CASE WHEN $2 = 0 THEN 0 ELSE $1 / $2 END"),
-        Rule::new(r"(?i)\bDIV0NULL\s*\(([^,]+),\s*([^)]+)\)", "CASE WHEN $2 = 0 THEN NULL ELSE $1 / $2 END"),
+        Rule::new(
+            r"(?i)\bDIV0\s*\(([^,]+),\s*([^)]+)\)",
+            "CASE WHEN $2 = 0 THEN 0 ELSE $1 / $2 END",
+        ),
+        Rule::new(
+            r"(?i)\bDIV0NULL\s*\(([^,]+),\s*([^)]+)\)",
+            "CASE WHEN $2 = 0 THEN NULL ELSE $1 / $2 END",
+        ),
         Rule::new(r"(?i)\bSQUARE\s*\(([^)]+)\)", "(($1) * ($1))"),
         Rule::new(r"(?i)\bCBRT\s*\(([^)]+)\)", "POWER($1, 1.0/3.0)"),
         Rule::new(r"(?i)\bLN\s*\(([^)]+)\)", "LOG($1)"),
@@ -122,10 +173,7 @@ static SIMPLE_RULES: Lazy<Vec<Rule>> = Lazy::new(|| {
         Rule::new(r"(?i)\bPARSE_JSON\s*\(([^)]+)\)", "$1"),
         // Snowflake OBJECT_CONSTRUCT — store as JSON
         // (basic two-arg version; complex versions require a custom function)
-        Rule::new(
-            r"(?i)\bOBJECT_CONSTRUCT\s*\(\s*\)",
-            "JSON('{}')",
-        ),
+        Rule::new(r"(?i)\bOBJECT_CONSTRUCT\s*\(\s*\)", "JSON('{}')"),
     ]
 });
 
@@ -388,7 +436,11 @@ pub fn rewrite_semi_structured_paths(sql: &str) -> String {
     let sql = RE_BRACKET_STR
         .replace_all(&sql, |caps: &regex::Captures| {
             let col = &caps[1];
-            let field = caps.get(2).or_else(|| caps.get(3)).map(|m| m.as_str()).unwrap_or("");
+            let field = caps
+                .get(2)
+                .or_else(|| caps.get(3))
+                .map(|m| m.as_str())
+                .unwrap_or("");
             format!("JSON_EXTRACT({col}, '$.{field}')")
         })
         .into_owned();
@@ -409,11 +461,9 @@ pub fn rewrite_semi_structured_paths(sql: &str) -> String {
 
 /// Translate `expr ILIKE pattern` → `LOWER(expr) LIKE LOWER(pattern)`.
 pub fn rewrite_ilike(sql: &str) -> String {
-    static RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)([^\s(]+)\s+ILIKE\s+([^\s)]+)").expect("valid ILIKE regex")
-    });
-    RE.replace_all(sql, "LOWER($1) LIKE LOWER($2)")
-        .into_owned()
+    static RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)([^\s(]+)\s+ILIKE\s+([^\s)]+)").expect("valid ILIKE regex"));
+    RE.replace_all(sql, "LOWER($1) LIKE LOWER($2)").into_owned()
 }
 
 // ── CREATE OR REPLACE TABLE ──────────────────────────────────────────────────
@@ -425,15 +475,15 @@ pub fn rewrite_create_or_replace(sql: &str) -> String {
         Regex::new(r"(?i)\bCREATE\s+OR\s+REPLACE\s+TABLE\s+")
             .expect("valid CREATE OR REPLACE regex")
     });
-    RE.replace_all(sql, "CREATE TABLE IF NOT EXISTS ").into_owned()
+    RE.replace_all(sql, "CREATE TABLE IF NOT EXISTS ")
+        .into_owned()
 }
 
 // ── TOP n → LIMIT n ──────────────────────────────────────────────────────────
 
 pub fn rewrite_top_n(sql: &str) -> String {
-    static RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\bSELECT\s+TOP\s+(\d+)\b").expect("valid TOP regex")
-    });
+    static RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)\bSELECT\s+TOP\s+(\d+)\b").expect("valid TOP regex"));
     // This is a simplistic rewrite — it adds LIMIT at the end.
     // For a full implementation an AST-based approach would be needed.
     if let Some(caps) = RE.captures(sql) {

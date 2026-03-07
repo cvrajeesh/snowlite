@@ -22,8 +22,7 @@ use regex::Regex;
 /// Rewrite all Snowflake type annotations in a DDL statement to SQLite affinities.
 pub fn rewrite_types(sql: &str) -> String {
     let sql = rewrite_number_type(sql);
-    let sql = rewrite_simple_types(&sql);
-    sql
+    rewrite_simple_types(&sql)
 }
 
 /// Rewrite `NUMBER(p,s)`, `DECIMAL(p,s)`, `NUMERIC(p,s)`.

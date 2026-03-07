@@ -8,7 +8,7 @@ use super::noop;
 use super::types;
 
 /// Configuration for the SQL translator.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TranslatorConfig {
     /// When `true`, two-part identifiers `schema.table` become `schema__table`
     /// instead of just `table`.  Useful when tests use multiple schemas.
@@ -20,14 +20,6 @@ pub struct TranslatorConfig {
     pub drop_before_create: bool,
 }
 
-impl Default for TranslatorConfig {
-    fn default() -> Self {
-        TranslatorConfig {
-            use_schema_prefix: false,
-            drop_before_create: false,
-        }
-    }
-}
 
 /// Translates Snowflake SQL to SQLite SQL.
 ///

@@ -37,8 +37,7 @@ pub fn rewrite_functions(sql: &str) -> String {
     let sql = rewrite_semi_structured_paths(&sql);
     let sql = rewrite_ilike(&sql);
     let sql = rewrite_create_or_replace(&sql);
-    let sql = rewrite_top_n(&sql);
-    sql
+    rewrite_top_n(&sql)
 }
 
 // ── Simple one-to-one function mappings ────────────────────────────────────

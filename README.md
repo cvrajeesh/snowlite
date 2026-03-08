@@ -1,5 +1,7 @@
 # local-db
 
+[![codecov](https://codecov.io/gh/cvrajeesh/local-db/branch/main/graph/badge.svg)](https://codecov.io/gh/cvrajeesh/local-db)
+
 A local SQLite-backed database driver that acts as a **drop-in replacement for Snowflake** in integration tests.
 
 Write your application code against the Snowflake SQL dialect. In CI or on a developer laptop, swap the real Snowflake connection for `local-db` — no data warehouse required.

@@ -237,12 +237,16 @@ fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
     conn.create_scalar_function("regexp", 2, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
         let pattern: String = ctx.get(0)?;
         let text: String = ctx.get(1)?;
-        let re = regex::Regex::new(&pattern).map_err(|e| {
-            rusqlite::Error::UserFunctionError(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                e.to_string(),
-            )))
-        })?;
+        // Limit compiled regex size to prevent memory exhaustion from crafted patterns
+        let re = regex::RegexBuilder::new(&pattern)
+            .size_limit(1 << 20) // 1 MiB DFA size limit
+            .build()
+            .map_err(|e| {
+                rusqlite::Error::UserFunctionError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    e.to_string(),
+                )))
+            })?;
         Ok(re.is_match(&text))
     })?;
 
@@ -297,8 +301,11 @@ fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
         let json_str: String = ctx.get(0)?;
         let path: String = ctx.get(1)?;
         let json: serde_json::Value = serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
+        // Limit path depth to prevent excessive iteration on malicious input
+        const MAX_PATH_DEPTH: usize = 64;
         let result = path
             .split('.')
+            .take(MAX_PATH_DEPTH)
             .fold(&json, |acc, key| acc.get(key).unwrap_or(&serde_json::Value::Null));
         Ok(result.to_string())
     })?;

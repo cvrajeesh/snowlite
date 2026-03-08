@@ -98,7 +98,16 @@ impl FromValue for i64 {
     fn from_value(v: &Value) -> Result<Self> {
         match v {
             Value::Integer(i) => Ok(*i),
-            Value::Real(r) => Ok(*r as i64),
+            Value::Real(r) => {
+                if r.is_nan() || r.is_infinite() {
+                    Err(Error::TypeConversion {
+                        expected: "i64",
+                        actual: format!("REAL({r}) is not representable as i64"),
+                    })
+                } else {
+                    Ok(*r as i64)
+                }
+            }
             Value::Boolean(b) => Ok(if *b { 1 } else { 0 }),
             Value::Text(s) => s.parse().map_err(|_| Error::TypeConversion {
                 expected: "i64",
@@ -114,13 +123,23 @@ impl FromValue for i64 {
 
 impl FromValue for i32 {
     fn from_value(v: &Value) -> Result<Self> {
-        i64::from_value(v).map(|i| i as i32)
+        i64::from_value(v).and_then(|i| {
+            i32::try_from(i).map_err(|_| Error::TypeConversion {
+                expected: "i32",
+                actual: format!("INTEGER({i}) is out of range for i32"),
+            })
+        })
     }
 }
 
 impl FromValue for u64 {
     fn from_value(v: &Value) -> Result<Self> {
-        i64::from_value(v).map(|i| i as u64)
+        i64::from_value(v).and_then(|i| {
+            u64::try_from(i).map_err(|_| Error::TypeConversion {
+                expected: "u64",
+                actual: format!("INTEGER({i}) is negative, cannot convert to u64"),
+            })
+        })
     }
 }
 

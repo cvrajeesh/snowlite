@@ -130,32 +130,32 @@ impl Translator {
             vec![
                 // AUTOINCREMENT keyword (Snowflake uses it differently from SQLite)
                 (
-                    Regex::new(r"(?i)\bAUTOINCREMENT\b").unwrap(),
+                    Regex::new(r"(?i)\bAUTOINCREMENT\b").expect("valid AUTOINCREMENT regex"),
                     "",
                 ),
                 // Snowflake DEFAULT sequences: DEFAULT <sequence>.NEXTVAL
                 (
-                    Regex::new(r"(?i)\bDEFAULT\s+\S+\.NEXTVAL\b").unwrap(),
+                    Regex::new(r"(?i)\bDEFAULT\s+\S+\.NEXTVAL\b").expect("valid NEXTVAL regex"),
                     "",
                 ),
                 // COMMENT = '...'
                 (
-                    Regex::new(r"(?i)\bCOMMENT\s*=\s*'[^']*'").unwrap(),
+                    Regex::new(r"(?i)\bCOMMENT\s*=\s*'[^']*'").expect("valid COMMENT regex"),
                     "",
                 ),
                 // CLUSTER BY (...)
                 (
-                    Regex::new(r"(?i)\bCLUSTER\s+BY\s*\([^)]*\)").unwrap(),
+                    Regex::new(r"(?i)\bCLUSTER\s+BY\s*\([^)]*\)").expect("valid CLUSTER BY regex"),
                     "",
                 ),
                 // ENABLE_SCHEMA_EVOLUTION / DATA_RETENTION_TIME_IN_DAYS / etc.
                 (
-                    Regex::new(r"(?i)\b(?:ENABLE_SCHEMA_EVOLUTION|DATA_RETENTION_TIME_IN_DAYS|CHANGE_TRACKING|COPY\s+GRANTS|WITH\s+MASKING\s+POLICY)\s*=\s*\S+").unwrap(),
+                    Regex::new(r"(?i)\b(?:ENABLE_SCHEMA_EVOLUTION|DATA_RETENTION_TIME_IN_DAYS|CHANGE_TRACKING|COPY\s+GRANTS|WITH\s+MASKING\s+POLICY)\s*=\s*\S+").expect("valid Snowflake options regex"),
                     "",
                 ),
                 // COLLATE 'utf8'  (SQLite has limited collation support)
                 (
-                    Regex::new(r"(?i)\bCOLLATE\s+'\S+'").unwrap(),
+                    Regex::new(r"(?i)\bCOLLATE\s+'\S+'").expect("valid COLLATE regex"),
                     "",
                 ),
                 // ON DELETE / ON UPDATE actions that SQLite doesn't support

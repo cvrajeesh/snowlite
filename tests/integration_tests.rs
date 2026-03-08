@@ -315,6 +315,93 @@ fn transaction_rollback() {
     assert_eq!(count, 0);
 }
 
+// ── Security fix regression tests ────────────────────────────────────────────
+
+/// i64 → i32: values within range should succeed; out-of-range should error.
+#[test]
+fn type_conversion_i32_overflow_returns_error() {
+    let c = conn();
+    c.execute("CREATE TABLE t (v INTEGER)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES (?)", &[&(i64::MAX)]).unwrap();
+
+    let rows = c.query("SELECT v FROM t", &[]).unwrap();
+    let result = rows[0].get::<i32>(0);
+    assert!(
+        result.is_err(),
+        "converting i64::MAX to i32 should return an error, not silently truncate"
+    );
+}
+
+/// i64 → u64: negative values must return an error, not wrap.
+#[test]
+fn type_conversion_u64_negative_returns_error() {
+    let c = conn();
+    c.execute("CREATE TABLE t (v INTEGER)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES (?)", &[&(-1i64)]).unwrap();
+
+    let rows = c.query("SELECT v FROM t", &[]).unwrap();
+    let result = rows[0].get::<u64>(0);
+    assert!(
+        result.is_err(),
+        "converting -1 to u64 should return an error, not wrap to u64::MAX"
+    );
+}
+
+/// f64 → i64: NaN must return a TypeConversion error, not silently become 0.
+#[test]
+fn type_conversion_f64_nan_to_i64_returns_error() {
+    use local_db::{Error, Value};
+    // Build a Value::Real(NaN) directly and call from_value
+    let v = Value::Real(f64::NAN);
+    let result = <i64 as local_db::row::FromValue>::from_value(&v);
+    assert!(
+        result.is_err(),
+        "converting NaN to i64 should be an error"
+    );
+    match result {
+        Err(Error::TypeConversion { .. }) => {}
+        other => panic!("expected TypeConversion error, got {:?}", other),
+    }
+}
+
+/// REGEXP custom function: invalid regex should return a SQLite function error,
+/// not panic or exhaust memory.
+#[test]
+fn regexp_invalid_pattern_returns_error() {
+    let c = conn();
+    // An invalid regex pattern
+    let result = c.query("SELECT regexp('[invalid', 'test')", &[]);
+    assert!(
+        result.is_err(),
+        "REGEXP with invalid pattern should return an error"
+    );
+}
+
+/// REGEXP custom function: a valid pattern should match correctly.
+#[test]
+fn regexp_valid_pattern_matches() {
+    let c = conn();
+    let rows = c
+        .query("SELECT regexp('^hello', 'hello world')", &[])
+        .unwrap();
+    let matched: i64 = rows[0].get(0).unwrap();
+    assert_eq!(matched, 1, "valid REGEXP pattern should match");
+}
+
+/// GET_PATH custom function: a deeply nested path beyond MAX_PATH_DEPTH (64)
+/// should not panic and should return 'null' for the missing key.
+#[test]
+fn get_path_deeply_nested_does_not_panic() {
+    let c = conn();
+    // Construct a path with 100 segments (beyond the 64-segment cap)
+    let deep_path: String = (0..100).map(|i| format!("k{}", i)).collect::<Vec<_>>().join(".");
+    let sql = format!("SELECT get_path('{{}}', '{}')", deep_path);
+    let rows = c.query(&sql, &[]).expect("get_path with deep path should not panic");
+    // Result should be "null" (serde_json Null serialized) since the path doesn't exist
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "null");
+}
+
 // ── execute_batch ────────────────────────────────────────────────────────────
 
 #[test]

@@ -57,32 +57,3 @@ pub fn is_noop(sql: &str) -> bool {
     }
     NOOP_PATTERNS.iter().any(|re| re.is_match(trimmed))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn noop_use_database() {
-        assert!(is_noop("USE DATABASE my_db"));
-        assert!(is_noop("use schema public"));
-        assert!(is_noop("  USE WAREHOUSE compute_wh  "));
-    }
-
-    #[test]
-    fn noop_alter_session() {
-        assert!(is_noop("ALTER SESSION SET QUERY_TAG = 'test'"));
-    }
-
-    #[test]
-    fn noop_show() {
-        assert!(is_noop("SHOW TABLES"));
-        assert!(is_noop("SHOW SCHEMAS IN DATABASE mydb"));
-    }
-
-    #[test]
-    fn not_noop_select() {
-        assert!(!is_noop("SELECT 1"));
-        assert!(!is_noop("CREATE TABLE foo (id INT)"));
-    }
-}

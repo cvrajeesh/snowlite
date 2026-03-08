@@ -246,6 +246,34 @@ fn fully_qualified_identifier_stripped() {
     assert_eq!(rows.len(), 1);
 }
 
+#[test]
+fn two_part_identifier_stripped() {
+    // schema.table with no prefix config → just table
+    let c = conn();
+    c.execute("CREATE TABLE orders (id INTEGER)", &[]).unwrap();
+    c.execute("INSERT INTO orders VALUES (1)", &[]).unwrap();
+
+    let rows = c
+        .query("SELECT id FROM public.orders", &[])
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 1);
+}
+
+#[test]
+fn quoted_three_part_identifier_stripped() {
+    // "DB"."SCHEMA"."TABLE" → "TABLE" (keeps original casing and quotes)
+    let c = conn();
+    c.execute("CREATE TABLE ORDERS (id INTEGER)", &[]).unwrap();
+    c.execute("INSERT INTO ORDERS VALUES (42)", &[]).unwrap();
+
+    let rows = c
+        .query(r#"SELECT id FROM "MY_DB"."PUBLIC"."ORDERS""#, &[])
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 42);
+}
+
 // ── No-ops ───────────────────────────────────────────────────────────────────
 
 #[test]
@@ -422,6 +450,25 @@ fn execute_batch_with_noops() {
     let rows = c.query("SELECT COUNT(*) FROM items", &[]).unwrap();
     let count: i64 = rows[0].get(0).unwrap();
     assert_eq!(count, 2);
+}
+
+#[test]
+fn execute_batch_semicolons_in_string_literals() {
+    // Semicolons inside string literals must not split the statement
+    let c = conn();
+    c.execute_batch(
+        "
+        CREATE TABLE notes (id INTEGER, text TEXT);
+        INSERT INTO notes VALUES (1, 'hello; world');
+        INSERT INTO notes VALUES (2, 'foo;bar;baz');
+        ",
+    )
+    .unwrap();
+
+    let rows = c.query("SELECT text FROM notes ORDER BY id", &[]).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "hello; world");
+    assert_eq!(rows[1].get::<String>(0).unwrap(), "foo;bar;baz");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -12,6 +12,14 @@ categories = ["database", "development-tools::testing"]
 name = "local_db"
 path = "src/lib.rs"
 
+[[bin]]
+name = "local-db-server"
+path = "src/bin/server.rs"
+required-features = ["server"]
+
+[features]
+server = ["axum", "tokio", "uuid"]
+
 [dependencies]
 rusqlite = { version = "0.31", features = ["bundled", "functions"] }
 thiserror = "1.0"
@@ -22,11 +30,23 @@ once_cell = "1.19"
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 
+# Server dependencies (optional, behind "server" feature)
+axum = { version = "0.7", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"], optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+
 [dev-dependencies]
 pretty_assertions = "1.4"
 env_logger = "0.11"
 tempfile = "3"
 serde_json = "1.0"
+# Server test utilities (axum/tokio come from [dependencies] via the "server" feature)
+tower = { version = "0.5", features = ["util"] }
+
+[[test]]
+name = "server_tests"
+path = "tests/server_tests.rs"
+required-features = ["server"]
 
 [profile.release]
 opt-level = 3

@@ -104,8 +104,9 @@ impl Translator {
         use once_cell::sync::Lazy;
         use regex::Regex;
 
+        // Capture table name as a valid SQL identifier (optionally quoted)
         static RE: Lazy<Regex> = Lazy::new(|| {
-            Regex::new(r"(?i)\bCREATE\s+OR\s+REPLACE\s+TABLE\s+([^\s(]+)")
+            Regex::new(r#"(?i)\bCREATE\s+OR\s+REPLACE\s+TABLE\s+("?[A-Za-z_][A-Za-z0-9_$]*"?)"#)
                 .expect("valid CREATE OR REPLACE regex")
         });
 

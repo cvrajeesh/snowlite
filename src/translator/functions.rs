@@ -274,91 +274,155 @@ pub fn rewrite_nvl2(sql: &str) -> String {
 
 pub fn rewrite_dateadd(sql: &str) -> String {
     static RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\bDATEADD\s*\(\s*(YEAR|QUARTER|MONTH|WEEK|DAY|HOUR|MINUTE|SECOND)\s*,\s*([^,]+),\s*([^)]+)\)")
-            .expect("valid DATEADD regex")
+        Regex::new(r"(?i)\bDATEADD\s*\(").expect("valid DATEADD regex")
     });
 
-    RE.replace_all(sql, |caps: &regex::Captures| {
-        let unit = caps[1].to_ascii_lowercase();
-        let n = caps[2].trim();
-        let date = caps[3].trim();
-        match unit.as_str() {
-            "year" => format!("DATE({date}, ({n}) || ' years')"),
-            "quarter" => format!("DATE({date}, (({n}) * 3) || ' months')"),
-            "month" => format!("DATE({date}, ({n}) || ' months')"),
-            "week" => format!("DATE({date}, (({n}) * 7) || ' days')"),
-            "day" => format!("DATE({date}, ({n}) || ' days')"),
-            "hour" => format!("DATETIME({date}, ({n}) || ' hours')"),
-            "minute" => format!("DATETIME({date}, ({n}) || ' minutes')"),
-            "second" => format!("DATETIME({date}, ({n}) || ' seconds')"),
-            _ => caps[0].to_owned(),
+    let mut result = String::with_capacity(sql.len());
+    let mut i = 0;
+
+    while i < sql.len() {
+        if let Some(m) = RE.find(&sql[i..]) {
+            result.push_str(&sql[i..i + m.start()]);
+            i += m.end();
+
+            // Use paren-aware splitting for the three arguments
+            if let Some((unit_str, n, date, consumed)) = split_three_args(&sql[i..]) {
+                let unit = unit_str.trim().to_ascii_lowercase();
+                let n = n.trim();
+                let date = date.trim();
+                let replacement = match unit.as_str() {
+                    "year" => format!("DATE({date}, ({n}) || ' years')"),
+                    "quarter" => format!("DATE({date}, (({n}) * 3) || ' months')"),
+                    "month" => format!("DATE({date}, ({n}) || ' months')"),
+                    "week" => format!("DATE({date}, (({n}) * 7) || ' days')"),
+                    "day" => format!("DATE({date}, ({n}) || ' days')"),
+                    "hour" => format!("DATETIME({date}, ({n}) || ' hours')"),
+                    "minute" => format!("DATETIME({date}, ({n}) || ' minutes')"),
+                    "second" => format!("DATETIME({date}, ({n}) || ' seconds')"),
+                    _ => {
+                        result.push_str("DATEADD(");
+                        continue;
+                    }
+                };
+                result.push_str(&replacement);
+                i += consumed + 1; // +1 for closing ')'
+            } else {
+                result.push_str("DATEADD(");
+            }
+        } else {
+            result.push_str(&sql[i..]);
+            break;
         }
-    })
-    .into_owned()
+    }
+    result
 }
 
 // ── DATEDIFF ─────────────────────────────────────────────────────────────────
 
 pub fn rewrite_datediff(sql: &str) -> String {
     static RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\bDATEDIFF\s*\(\s*(YEAR|QUARTER|MONTH|WEEK|DAY|HOUR|MINUTE|SECOND)\s*,\s*([^,]+),\s*([^)]+)\)")
-            .expect("valid DATEDIFF regex")
+        Regex::new(r"(?i)\bDATEDIFF\s*\(").expect("valid DATEDIFF regex")
     });
 
-    RE.replace_all(sql, |caps: &regex::Captures| {
-        let unit = caps[1].to_ascii_lowercase();
-        let d1 = caps[2].trim();
-        let d2 = caps[3].trim();
-        match unit.as_str() {
-            "day" => format!("(JULIANDAY({d2}) - JULIANDAY({d1}))"),
-            "week" => format!("((JULIANDAY({d2}) - JULIANDAY({d1})) / 7)"),
-            "hour" => format!("((JULIANDAY({d2}) - JULIANDAY({d1})) * 24)"),
-            "minute" => format!("((JULIANDAY({d2}) - JULIANDAY({d1})) * 1440)"),
-            "second" => format!("((JULIANDAY({d2}) - JULIANDAY({d1})) * 86400)"),
-            "month" => format!(
-                "((CAST(STRFTIME('%Y', {d2}) AS INTEGER) - CAST(STRFTIME('%Y', {d1}) AS INTEGER)) * 12 + \
-                  CAST(STRFTIME('%m', {d2}) AS INTEGER) - CAST(STRFTIME('%m', {d1}) AS INTEGER))"
-            ),
-            "year" => format!(
-                "(CAST(STRFTIME('%Y', {d2}) AS INTEGER) - CAST(STRFTIME('%Y', {d1}) AS INTEGER))"
-            ),
-            "quarter" => format!(
-                "(((CAST(STRFTIME('%Y', {d2}) AS INTEGER) - CAST(STRFTIME('%Y', {d1}) AS INTEGER)) * 12 + \
-                   CAST(STRFTIME('%m', {d2}) AS INTEGER) - CAST(STRFTIME('%m', {d1}) AS INTEGER)) / 3)"
-            ),
-            _ => caps[0].to_owned(),
+    let mut result = String::with_capacity(sql.len());
+    let mut i = 0;
+
+    while i < sql.len() {
+        if let Some(m) = RE.find(&sql[i..]) {
+            result.push_str(&sql[i..i + m.start()]);
+            i += m.end();
+
+            if let Some((unit_str, d1, d2, consumed)) = split_three_args(&sql[i..]) {
+                let unit = unit_str.trim().to_ascii_lowercase();
+                let d1 = d1.trim();
+                let d2 = d2.trim();
+                let replacement = match unit.as_str() {
+                    "day" => format!("(JULIANDAY({d2}) - JULIANDAY({d1}))"),
+                    "week" => format!("((JULIANDAY({d2}) - JULIANDAY({d1})) / 7)"),
+                    "hour" => format!("((JULIANDAY({d2}) - JULIANDAY({d1})) * 24)"),
+                    "minute" => format!("((JULIANDAY({d2}) - JULIANDAY({d1})) * 1440)"),
+                    "second" => format!("((JULIANDAY({d2}) - JULIANDAY({d1})) * 86400)"),
+                    "month" => format!(
+                        "((CAST(STRFTIME('%Y', {d2}) AS INTEGER) - CAST(STRFTIME('%Y', {d1}) AS INTEGER)) * 12 + \
+                          CAST(STRFTIME('%m', {d2}) AS INTEGER) - CAST(STRFTIME('%m', {d1}) AS INTEGER))"
+                    ),
+                    "year" => format!(
+                        "(CAST(STRFTIME('%Y', {d2}) AS INTEGER) - CAST(STRFTIME('%Y', {d1}) AS INTEGER))"
+                    ),
+                    "quarter" => format!(
+                        "(((CAST(STRFTIME('%Y', {d2}) AS INTEGER) - CAST(STRFTIME('%Y', {d1}) AS INTEGER)) * 12 + \
+                           CAST(STRFTIME('%m', {d2}) AS INTEGER) - CAST(STRFTIME('%m', {d1}) AS INTEGER)) / 3)"
+                    ),
+                    _ => {
+                        result.push_str("DATEDIFF(");
+                        continue;
+                    }
+                };
+                result.push_str(&replacement);
+                i += consumed + 1;
+            } else {
+                result.push_str("DATEDIFF(");
+            }
+        } else {
+            result.push_str(&sql[i..]);
+            break;
         }
-    })
-    .into_owned()
+    }
+    result
 }
 
 // ── DATE_TRUNC ───────────────────────────────────────────────────────────────
 
 pub fn rewrite_date_trunc(sql: &str) -> String {
     static RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\bDATE_TRUNC\s*\(\s*'?(YEAR|QUARTER|MONTH|WEEK|DAY|HOUR|MINUTE|SECOND)'?\s*,\s*([^)]+)\)")
-            .expect("valid DATE_TRUNC regex")
+        Regex::new(r"(?i)\bDATE_TRUNC\s*\(").expect("valid DATE_TRUNC regex")
     });
 
-    RE.replace_all(sql, |caps: &regex::Captures| {
-        let unit = caps[1].to_ascii_lowercase();
-        let date = caps[2].trim();
-        match unit.as_str() {
-            "year" => format!("DATE({date}, 'start of year')"),
-            "month" => format!("DATE({date}, 'start of month')"),
-            "day" => format!("DATE({date})"),
-            "hour" => format!("STRFTIME('%Y-%m-%d %H:00:00', {date})"),
-            "minute" => format!("STRFTIME('%Y-%m-%d %H:%M:00', {date})"),
-            "second" => format!("STRFTIME('%Y-%m-%d %H:%M:%S', {date})"),
-            // QUARTER / WEEK are approximations
-            "quarter" => format!(
-                "DATE({date}, '-' || ((CAST(STRFTIME('%m', {date}) AS INTEGER) - 1) % 3) || ' months', 'start of month')"
-            ),
-            "week" => format!("DATE({date}, 'weekday 1', '-7 days')"),
-            _ => caps[0].to_owned(),
+    let mut result = String::with_capacity(sql.len());
+    let mut i = 0;
+
+    while i < sql.len() {
+        if let Some(m) = RE.find(&sql[i..]) {
+            result.push_str(&sql[i..i + m.start()]);
+            i += m.end();
+
+            // DATE_TRUNC has two arguments: unit and date expression
+            if let Some(args_content) = extract_parenthesized(&sql[i..]) {
+                let parts = split_args(args_content);
+                if parts.len() == 2 {
+                    // Strip optional quotes around the unit keyword
+                    let unit = parts[0].trim().trim_matches('\'').to_ascii_lowercase();
+                    let date = parts[1].trim();
+                    let replacement = match unit.as_str() {
+                        "year" => format!("DATE({date}, 'start of year')"),
+                        "month" => format!("DATE({date}, 'start of month')"),
+                        "day" => format!("DATE({date})"),
+                        "hour" => format!("STRFTIME('%Y-%m-%d %H:00:00', {date})"),
+                        "minute" => format!("STRFTIME('%Y-%m-%d %H:%M:00', {date})"),
+                        "second" => format!("STRFTIME('%Y-%m-%d %H:%M:%S', {date})"),
+                        "quarter" => format!(
+                            "DATE({date}, '-' || ((CAST(STRFTIME('%m', {date}) AS INTEGER) - 1) % 3) || ' months', 'start of month')"
+                        ),
+                        "week" => format!("DATE({date}, 'weekday 1', '-7 days')"),
+                        _ => {
+                            result.push_str("DATE_TRUNC(");
+                            continue;
+                        }
+                    };
+                    result.push_str(&replacement);
+                    i += args_content.len() + 1; // +1 for closing ')'
+                } else {
+                    result.push_str("DATE_TRUNC(");
+                }
+            } else {
+                result.push_str("DATE_TRUNC(");
+            }
+        } else {
+            result.push_str(&sql[i..]);
+            break;
         }
-    })
-    .into_owned()
+    }
+    result
 }
 
 // ── Semi-structured path expressions ────────────────────────────────────────
@@ -388,6 +452,8 @@ pub fn rewrite_semi_structured_paths(sql: &str) -> String {
         .replace_all(&sql, |caps: &regex::Captures| {
             let col = &caps[1];
             let field = caps.get(2).or_else(|| caps.get(3)).map(|m| m.as_str()).unwrap_or("");
+            // Sanitize field name: escape single quotes to prevent JSON path injection
+            let field = field.replace('\'', "");
             format!("JSON_EXTRACT({col}, '$.{field}')")
         })
         .into_owned();
@@ -453,19 +519,21 @@ fn extract_parenthesized(s: &str) -> Option<&str> {
     if bytes.first() != Some(&b'(') {
         // Already consumed the opening paren by the regex; content starts at 0
     }
-    let mut depth = 1i32;
+    let mut depth = 1u32;
     let mut in_single = false;
     let mut in_double = false;
     for (i, &b) in bytes.iter().enumerate() {
         match b {
             b'\'' if !in_double => in_single = !in_single,
             b'"' if !in_single => in_double = !in_double,
-            b'(' if !in_single && !in_double => depth += 1,
+            b'(' if !in_single && !in_double => {
+                depth = depth.saturating_add(1);
+            }
             b')' if !in_single && !in_double => {
-                depth -= 1;
-                if depth == 0 {
+                if depth <= 1 {
                     return Some(&s[..i]);
                 }
+                depth -= 1;
             }
             _ => {}
         }
@@ -477,7 +545,7 @@ fn extract_parenthesized(s: &str) -> Option<&str> {
 pub fn split_args(s: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let bytes = s.as_bytes();
-    let mut depth = 0i32;
+    let mut depth = 0u32;
     let mut in_single = false;
     let mut in_double = false;
     let mut start = 0;
@@ -486,8 +554,12 @@ pub fn split_args(s: &str) -> Vec<&str> {
         match b {
             b'\'' if !in_double => in_single = !in_single,
             b'"' if !in_single => in_double = !in_double,
-            b'(' if !in_single && !in_double => depth += 1,
-            b')' if !in_single && !in_double => depth -= 1,
+            b'(' if !in_single && !in_double => {
+                depth = depth.saturating_add(1);
+            }
+            b')' if !in_single && !in_double => {
+                depth = depth.saturating_sub(1);
+            }
             b',' if depth == 0 && !in_single && !in_double => {
                 parts.push(&s[start..i]);
                 start = i + 1;
@@ -504,7 +576,7 @@ pub fn split_args(s: &str) -> Vec<&str> {
 /// where `bytes_consumed` does NOT include the final `)`.
 fn split_three_args(s: &str) -> Option<(&str, &str, &str, usize)> {
     let bytes = s.as_bytes();
-    let mut depth = 0i32;
+    let mut depth = 0u32;
     let mut in_single = false;
     let mut in_double = false;
     let mut commas = Vec::new();
@@ -514,7 +586,9 @@ fn split_three_args(s: &str) -> Option<(&str, &str, &str, usize)> {
         match b {
             b'\'' if !in_double => in_single = !in_single,
             b'"' if !in_single => in_double = !in_double,
-            b'(' if !in_single && !in_double => depth += 1,
+            b'(' if !in_single && !in_double => {
+                depth = depth.saturating_add(1);
+            }
             b')' if !in_single && !in_double => {
                 if depth == 0 {
                     end = Some(i);

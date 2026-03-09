@@ -40,6 +40,13 @@ pretty_assertions = "1.4"
 env_logger = "0.11"
 tempfile = "3"
 serde_json = "1.0"
+# Server test utilities (axum/tokio come from [dependencies] via the "server" feature)
+tower = { version = "0.5", features = ["util"] }
+
+[[test]]
+name = "server_tests"
+path = "tests/server_tests.rs"
+required-features = ["server"]
 
 [profile.release]
 opt-level = 3

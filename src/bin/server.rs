@@ -88,7 +88,7 @@ impl ConnHandle {
 type Sessions = Arc<Mutex<HashMap<String, ConnHandle>>>;
 
 #[derive(Clone)]
-struct AppState {
+pub struct AppState {
     sessions: Sessions,
 }
 
@@ -595,6 +595,30 @@ async fn telemetry_send() -> Json<JsonValue> {
     Json(json!({"success": true}))
 }
 
+// ── App builder ───────────────────────────────────────────────────────────────
+
+impl AppState {
+    fn new() -> Self {
+        AppState {
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+/// Build the axum router with all routes wired up.
+///
+/// Extracted from `main` so tests can construct the app in-process without
+/// binding a real TCP port.
+pub fn build_router(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .route("/session/v1/login-request", post(login))
+        .route("/session", post(session_action))
+        .route("/queries/v1/query-request", post(query_request))
+        .route("/telemetry/send", post(telemetry_send))
+        .with_state(state)
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -605,17 +629,7 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(8765);
 
-    let state = AppState {
-        sessions: Arc::new(Mutex::new(HashMap::new())),
-    };
-
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/session/v1/login-request", post(login))
-        .route("/session", post(session_action))
-        .route("/queries/v1/query-request", post(query_request))
-        .route("/telemetry/send", post(telemetry_send))
-        .with_state(state);
+    let app = build_router(AppState::new());
 
     let addr = format!("0.0.0.0:{port}");
     eprintln!("local-db-server listening on {addr}");

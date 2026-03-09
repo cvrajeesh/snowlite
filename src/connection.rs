@@ -237,14 +237,15 @@ fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
     conn.create_scalar_function("regexp", 2, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
         let pattern: String = ctx.get(0)?;
         let text: String = ctx.get(1)?;
-        // Limit compiled regex size to prevent memory exhaustion from crafted patterns
+        // Limit compiled regex size and DFA size to prevent memory/CPU exhaustion
         let re = regex::RegexBuilder::new(&pattern)
-            .size_limit(1 << 20) // 1 MiB DFA size limit
+            .size_limit(1 << 20) // 1 MiB compiled size limit
+            .dfa_size_limit(1 << 20) // 1 MiB DFA size limit
             .build()
-            .map_err(|e| {
+            .map_err(|_| {
                 rusqlite::Error::UserFunctionError(Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    e.to_string(),
+                    "invalid or too complex regular expression",
                 )))
             })?;
         Ok(re.is_match(&text))
@@ -255,8 +256,16 @@ fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
         let s: String = ctx.get(0)?;
         let delim: String = ctx.get(1)?;
         let n: i64 = ctx.get(2)?;
+        if n <= 0 {
+            return Err(rusqlite::Error::UserFunctionError(Box::new(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "SPLIT_PART part number must be positive",
+                ),
+            )));
+        }
         let parts: Vec<&str> = s.split(delim.as_str()).collect();
-        let idx = if n > 0 { (n - 1) as usize } else { 0 };
+        let idx = (n - 1) as usize;
         Ok(parts.get(idx).map(|s| s.to_string()).unwrap_or_default())
     })?;
 
@@ -265,9 +274,17 @@ fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
         let s: String = ctx.get(0)?;
         let delims: String = ctx.get(1)?;
         let n: i64 = ctx.get(2)?;
+        if n <= 0 {
+            return Err(rusqlite::Error::UserFunctionError(Box::new(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "STRTOK part number must be positive",
+                ),
+            )));
+        }
         let delim_chars: Vec<char> = delims.chars().collect();
         let parts: Vec<&str> = s.split(|c| delim_chars.contains(&c)).filter(|p| !p.is_empty()).collect();
-        let idx = if n > 0 { (n - 1) as usize } else { 0 };
+        let idx = (n - 1) as usize;
         Ok(parts.get(idx).map(|s| s.to_string()).unwrap_or_default())
     })?;
 

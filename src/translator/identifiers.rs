@@ -39,7 +39,13 @@ pub fn strip_qualifiers(sql: &str, use_schema_prefix: bool) -> String {
             .replace_all(&sql, |caps: &regex::Captures| {
                 let schema = caps[1].trim_matches('"');
                 let table = caps[2].trim_matches('"');
-                format!("{schema}__{table}")
+                // Ensure the trimmed parts only contain valid identifier characters
+                let sanitize = |s: &str| -> String {
+                    s.chars()
+                        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
+                        .collect()
+                };
+                format!("{}__{}", sanitize(schema), sanitize(table))
             })
             .into_owned()
     } else {

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/cvrajeesh/snowlite/compare/snowlite-v0.2.0...snowlite-v0.2.1) - 2026-03-10
+
+### Added
+
+- return descriptive Translation error for FLATTEN() ([#28](https://github.com/cvrajeesh/snowlite/pull/28))
+- implement Priority 3 — LOW IMPACT / NICE TO HAVE features ([#25](https://github.com/cvrajeesh/snowlite/pull/25))
+- implement Priority 2 — MEDIUM IMPACT features ([#23](https://github.com/cvrajeesh/snowlite/pull/23))
+- translate GREATEST/LEAST to SQLite scalar MAX/MIN ([#20](https://github.com/cvrajeesh/snowlite/pull/20))
+
+### Fixed
+
+- correct field name from tag_name_pattern to git_tag_name ([#31](https://github.com/cvrajeesh/snowlite/pull/31))
+- use package-scoped tag pattern to resolve snowlite rename collision ([#30](https://github.com/cvrajeesh/snowlite/pull/30))
+- add git_only = true to resolve release-plz skipping package ([#29](https://github.com/cvrajeesh/snowlite/pull/29))
+- remove publish=false from Cargo.toml to unblock automated release PRs ([#27](https://github.com/cvrajeesh/snowlite/pull/27))
+- release-plz release-pr skips package when publish=false ([#26](https://github.com/cvrajeesh/snowlite/pull/26))
+- disable semver_check and add publish=false to unblock release-plz PR creation ([#24](https://github.com/cvrajeesh/snowlite/pull/24))
+- enable git releases in release-plz to unblock PR creation ([#21](https://github.com/cvrajeesh/snowlite/pull/21))
+
+### Other
+
+- add /merge-pr slash command ([#22](https://github.com/cvrajeesh/snowlite/pull/22))
+- only run release job on release PR merge or manual trigger ([#19](https://github.com/cvrajeesh/snowlite/pull/19))
+
 ## [0.2.0](https://github.com/cvrajeesh/snowlite/releases/tag/v0.2.0) - 2026-03-10
 
 ### Added

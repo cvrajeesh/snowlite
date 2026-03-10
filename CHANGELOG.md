@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/cvrajeesh/snowlite/compare/v0.2.1...v0.2.2) - 2026-03-10
+
+### Fixed
+
+- trigger release-binaries via workflow_run instead of release event ([#33](https://github.com/cvrajeesh/snowlite/pull/33))
+
 ## [0.2.1](https://github.com/cvrajeesh/snowlite/compare/snowlite-v0.2.0...snowlite-v0.2.1) - 2026-03-10
 
 ### Added

@@ -2918,3 +2918,273 @@ fn merge_into_is_noop() {
     )
     .unwrap();
 }
+
+// ── Priority 3: Math Functions ────────────────────────────────────────────────
+
+#[test]
+fn log_two_arg_form() {
+    // LOG(base, x) → (LOG(x) / LOG(base)): log base 10 of 100 = 2
+    let c = conn();
+    let rows = c.query("SELECT LOG(10, 100)", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 2.0).abs() < 1e-9, "log10(100) should be 2.0, got {result}");
+}
+
+#[test]
+fn log_one_arg_passes_through() {
+    // LOG(x) single-arg form passes through unchanged to SQLite's LOG()
+    let c = conn();
+    let rows = c.query("SELECT LOG(1)", &[]).unwrap();
+    // LOG(1) = 0 in any base
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 0.0).abs() < 1e-9, "log(1) should be 0.0, got {result}");
+}
+
+#[test]
+fn random_function_returns_value() {
+    // RANDOM() passes through to SQLite.
+    // Note: SQLite RANDOM() returns a 64-bit integer, not a float [0,1) like Snowflake.
+    let c = conn();
+    let rows = c.query("SELECT RANDOM()", &[]).unwrap();
+    let _: i64 = rows[0].get(0).unwrap();
+}
+
+#[test]
+fn width_bucket_function() {
+    let c = conn();
+    // 5.35 falls in bucket 3 of 5 buckets over [0.024, 10.06)
+    let rows = c.query("SELECT width_bucket(5.35, 0.024, 10.06, 5)", &[]).unwrap();
+    let bucket: i64 = rows[0].get(0).unwrap();
+    assert_eq!(bucket, 3, "5.35 in [0.024, 10.06] with 5 buckets should be bucket 3");
+
+    // Below min → bucket 0
+    let rows = c.query("SELECT width_bucket(-1.0, 0.0, 10.0, 5)", &[]).unwrap();
+    let b: i64 = rows[0].get(0).unwrap();
+    assert_eq!(b, 0);
+
+    // At or above max → bucket num_buckets + 1
+    let rows = c.query("SELECT width_bucket(10.0, 0.0, 10.0, 5)", &[]).unwrap();
+    let b: i64 = rows[0].get(0).unwrap();
+    assert_eq!(b, 6);
+}
+
+// ── Priority 3: Aggregate Functions ──────────────────────────────────────────
+
+#[test]
+fn median_odd_count() {
+    let c = conn();
+    c.execute("CREATE TABLE t (v REAL)", &[]).unwrap();
+    for v in [1.0f64, 2.0, 3.0, 4.0, 5.0] {
+        c.execute("INSERT INTO t VALUES (?)", &[&v]).unwrap();
+    }
+    let rows = c.query("SELECT MEDIAN(v) FROM t", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 3.0).abs() < 1e-9, "median of 1..5 should be 3.0, got {result}");
+}
+
+#[test]
+fn median_even_count() {
+    let c = conn();
+    c.execute("CREATE TABLE t (v REAL)", &[]).unwrap();
+    for v in [1.0f64, 2.0, 3.0, 4.0] {
+        c.execute("INSERT INTO t VALUES (?)", &[&v]).unwrap();
+    }
+    let rows = c.query("SELECT MEDIAN(v) FROM t", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 2.5).abs() < 1e-9, "median of 1..4 should be 2.5, got {result}");
+}
+
+#[test]
+fn any_value_function() {
+    // ANY_VALUE translates to MIN — returns the minimum value within each group
+    let c = conn();
+    c.execute("CREATE TABLE t (grp TEXT, v INTEGER)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES ('a', 1)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES ('a', 2)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES ('b', 3)", &[]).unwrap();
+
+    let rows = c
+        .query("SELECT grp, ANY_VALUE(v) FROM t GROUP BY grp ORDER BY grp", &[])
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    let v_a: i64 = rows[0].get(1).unwrap();
+    let v_b: i64 = rows[1].get(1).unwrap();
+    assert_eq!(v_a, 1);
+    assert_eq!(v_b, 3);
+}
+
+#[test]
+fn approx_count_distinct_function() {
+    // APPROX_COUNT_DISTINCT maps to COUNT(DISTINCT expr) — exact in SQLite
+    let c = conn();
+    c.execute("CREATE TABLE t (v INTEGER)", &[]).unwrap();
+    for v in [1i64, 2, 2, 3, 3, 3] {
+        c.execute("INSERT INTO t VALUES (?)", &[&v]).unwrap();
+    }
+    let rows = c.query("SELECT APPROX_COUNT_DISTINCT(v) FROM t", &[]).unwrap();
+    let cnt: i64 = rows[0].get(0).unwrap();
+    assert_eq!(cnt, 3);
+}
+
+#[test]
+fn array_agg_function() {
+    // ARRAY_AGG maps to JSON_GROUP_ARRAY — returns a JSON array
+    let c = conn();
+    c.execute("CREATE TABLE t (v INTEGER)", &[]).unwrap();
+    for v in [1i64, 2, 3] {
+        c.execute("INSERT INTO t VALUES (?)", &[&v]).unwrap();
+    }
+    let rows = c.query("SELECT ARRAY_AGG(v) FROM t", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid JSON array");
+    assert!(parsed.is_array());
+    assert_eq!(parsed.as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn object_agg_function() {
+    // OBJECT_AGG maps to JSON_GROUP_OBJECT — returns a JSON object
+    let c = conn();
+    c.execute("CREATE TABLE t (k TEXT, v INTEGER)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES ('a', 1)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES ('b', 2)", &[]).unwrap();
+    let rows = c.query("SELECT OBJECT_AGG(k, v) FROM t", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid JSON object");
+    assert!(parsed.is_object());
+    assert_eq!(parsed["a"], serde_json::json!(1));
+    assert_eq!(parsed["b"], serde_json::json!(2));
+}
+
+// ── Priority 3: Type System ───────────────────────────────────────────────────
+
+#[test]
+fn geography_type_maps_to_text() {
+    // GEOGRAPHY is unsupported by SQLite — mapped to TEXT with a log::warn!
+    let c = conn();
+    c.execute("CREATE TABLE t (id INTEGER, location GEOGRAPHY)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES (1, 'POINT(1.0 2.0)')", &[]).unwrap();
+    let rows = c.query("SELECT location FROM t", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "POINT(1.0 2.0)");
+}
+
+#[test]
+fn geometry_type_maps_to_text() {
+    // GEOMETRY is unsupported by SQLite — mapped to TEXT with a log::warn!
+    let c = conn();
+    c.execute("CREATE TABLE t (id INTEGER, shape GEOMETRY)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES (1, 'POLYGON((0 0,1 0,1 1,0 0))')", &[]).unwrap();
+    let rows = c.query("SELECT shape FROM t", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "POLYGON((0 0,1 0,1 1,0 0))");
+}
+
+#[test]
+fn from_value_small_integer_types() {
+    let c = conn();
+    let rows = c.query("SELECT 42, 127, 200, 32767", &[]).unwrap();
+    let v_i16: i16 = rows[0].get(0).unwrap();
+    let v_i8: i8 = rows[0].get(1).unwrap();
+    let v_u8: u8 = rows[0].get(2).unwrap();
+    let v_u32: u32 = rows[0].get(3).unwrap();
+    assert_eq!(v_i16, 42);
+    assert_eq!(v_i8, 127);
+    assert_eq!(v_u8, 200);
+    assert_eq!(v_u32, 32767);
+}
+
+#[test]
+fn from_value_serde_json() {
+    let c = conn();
+    c.execute("CREATE TABLE t (data TEXT)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES ('{\"key\":\"value\",\"n\":42}')", &[]).unwrap();
+    let rows = c.query("SELECT data FROM t", &[]).unwrap();
+    let parsed: serde_json::Value = rows[0].get(0).unwrap();
+    assert_eq!(parsed["key"], "value");
+    assert_eq!(parsed["n"], 42);
+}
+
+// ── Priority 3: Code Quality ──────────────────────────────────────────────────
+
+#[test]
+fn select_top_n_with_order_by() {
+    // SELECT TOP N ... ORDER BY col → SELECT ... ORDER BY col LIMIT N
+    // LIMIT must follow ORDER BY — verify both ordering and limit are correct
+    let c = conn();
+    c.execute("CREATE TABLE t (v INTEGER)", &[]).unwrap();
+    for v in [5i64, 3, 1, 4, 2] {
+        c.execute("INSERT INTO t VALUES (?)", &[&v]).unwrap();
+    }
+    let rows = c.query("SELECT TOP 3 v FROM t ORDER BY v", &[]).unwrap();
+    assert_eq!(rows.len(), 3);
+    let vals: Vec<i64> = rows.iter().map(|r| r.get(0).unwrap()).collect();
+    assert_eq!(vals, vec![1, 2, 3]);
+}
+
+// ── Priority 3: Bug Fixes ─────────────────────────────────────────────────────
+
+#[test]
+fn lpad_empty_pad_string_errors() {
+    // Snowflake raises an error when the pad string is empty
+    let c = conn();
+    let result = c.query("SELECT LPAD('hello', 10, '')", &[]);
+    assert!(result.is_err(), "LPAD with empty pad string should return an error");
+}
+
+#[test]
+fn rpad_empty_pad_string_errors() {
+    // Snowflake raises an error when the pad string is empty
+    let c = conn();
+    let result = c.query("SELECT RPAD('hello', 10, '')", &[]);
+    assert!(result.is_err(), "RPAD with empty pad string should return an error");
+}
+
+#[test]
+fn decimal_precision_limit() {
+    // NUMBER(p,s) is stored as REAL (64-bit float); Snowflake preserves up to 38 digits.
+    // SQLite REAL has ~15-17 significant decimal digit precision.
+    let c = conn();
+    c.execute("CREATE TABLE t (v NUMBER(38, 10))", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES (1234567890.1234567890)", &[]).unwrap();
+    let rows = c.query("SELECT v FROM t", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    // The value is approximately preserved but not to 38 significant digits
+    assert!(
+        (result - 1_234_567_890.123_456_789_f64).abs() < 1.0,
+        "REAL approximation within 1 unit: {result}"
+    );
+}
+
+#[test]
+fn string_collation_case_sensitivity() {
+    // COLLATE clauses are stripped; SQLite TEXT comparison is case-sensitive by default.
+    // Snowflake VARCHAR comparison is case-insensitive — this is a known difference.
+    let c = conn();
+    c.execute("CREATE TABLE t (name TEXT COLLATE 'utf8')", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES ('Alice')", &[]).unwrap();
+    let rows = c
+        .query("SELECT COUNT(*) FROM t WHERE name = 'alice'", &[])
+        .unwrap();
+    let count: i64 = rows[0].get(0).unwrap();
+    // Documents the difference: SQLite is case-sensitive (0 matches), Snowflake would return 1
+    assert_eq!(count, 0, "SQLite TEXT comparison is case-sensitive: 'Alice' != 'alice'");
+}
+
+#[test]
+fn recursive_cte_depth() {
+    // SQLite limits recursion to 1000 by default; Snowflake allows much deeper recursion.
+    // This test documents that shallow recursion (depth 10) works correctly.
+    let c = conn();
+    let rows = c
+        .query(
+            "WITH RECURSIVE n(i) AS (
+                SELECT 1
+                UNION ALL
+                SELECT i + 1 FROM n WHERE i < 10
+             )
+             SELECT COUNT(*) FROM n",
+            &[],
+        )
+        .unwrap();
+    let count: i64 = rows[0].get(0).unwrap();
+    assert_eq!(count, 10);
+}

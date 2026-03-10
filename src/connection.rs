@@ -243,9 +243,70 @@ fn build_regex(pattern: &str) -> std::result::Result<regex::Regex, rusqlite::Err
         })
 }
 
+// ── MEDIAN aggregate ─────────────────────────────────────────────────────────
+
+struct MedianAgg;
+
+struct MedianAccum {
+    values: Vec<f64>,
+}
+
+impl rusqlite::functions::Aggregate<MedianAccum, Option<f64>> for MedianAgg {
+    fn init(&self, _ctx: &mut rusqlite::functions::Context<'_>) -> rusqlite::Result<MedianAccum> {
+        Ok(MedianAccum { values: Vec::new() })
+    }
+
+    fn step(
+        &self,
+        ctx: &mut rusqlite::functions::Context<'_>,
+        acc: &mut MedianAccum,
+    ) -> rusqlite::Result<()> {
+        let val: Option<f64> = ctx.get(0)?;
+        if let Some(v) = val {
+            acc.values.push(v);
+        }
+        Ok(())
+    }
+
+    fn finalize(
+        &self,
+        _ctx: &mut rusqlite::functions::Context<'_>,
+        acc: Option<MedianAccum>,
+    ) -> rusqlite::Result<Option<f64>> {
+        match acc {
+            None => Ok(None),
+            Some(a) if a.values.is_empty() => Ok(None),
+            Some(mut a) => {
+                a.values.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+                let n = a.values.len();
+                let median = if n % 2 == 1 {
+                    a.values[n / 2]
+                } else {
+                    (a.values[n / 2 - 1] + a.values[n / 2]) / 2.0
+                };
+                Ok(Some(median))
+            }
+        }
+    }
+}
+
 fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
     use rusqlite::functions::FunctionFlags;
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
+
+    // LOG(x) — natural logarithm; bundled SQLite does not enable SQLITE_ENABLE_MATH_FUNCTIONS.
+    // Registered as "log" so that:
+    //   LN(x) → LOG(x)                         uses this function (ln)
+    //   LOG(base, x) → (LOG(x) / LOG(base))    change-of-base via ln is correct
+    conn.create_scalar_function("log", 1, det, |ctx| {
+        let x: f64 = ctx.get(0)?;
+        if x <= 0.0 {
+            return Err(rusqlite::Error::UserFunctionError(Box::new(
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "LOG argument must be positive"),
+            )));
+        }
+        Ok(x.ln())
+    })?;
 
     // REGEXP support (used by RLIKE / REGEXP operator — SQLite calls regexp(pattern, text))
     conn.create_scalar_function("regexp", 2, det, |ctx| {
@@ -307,13 +368,15 @@ fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
         let s: String = ctx.get(0)?;
         let len: i64 = ctx.get(1)?;
         let pad: String = if ctx.len() > 2 { ctx.get(2)? } else { " ".to_string() };
+        if pad.is_empty() {
+            return Err(rusqlite::Error::UserFunctionError(Box::new(
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "LPAD pad string cannot be empty"),
+            )));
+        }
         let len = len as usize;
         let s_chars: Vec<char> = s.chars().collect();
         if s_chars.len() >= len {
             return Ok(s_chars[..len].iter().collect::<String>());
-        }
-        if pad.is_empty() {
-            return Ok(s);
         }
         let needed = len - s_chars.len();
         let padding: String = pad.chars().cycle().take(needed).collect();
@@ -325,13 +388,15 @@ fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
         let s: String = ctx.get(0)?;
         let len: i64 = ctx.get(1)?;
         let pad: String = if ctx.len() > 2 { ctx.get(2)? } else { " ".to_string() };
+        if pad.is_empty() {
+            return Err(rusqlite::Error::UserFunctionError(Box::new(
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "RPAD pad string cannot be empty"),
+            )));
+        }
         let len = len as usize;
         let s_chars: Vec<char> = s.chars().collect();
         if s_chars.len() >= len {
             return Ok(s_chars[..len].iter().collect::<String>());
-        }
-        if pad.is_empty() {
-            return Ok(s);
         }
         let needed = len - s_chars.len();
         let padding: String = pad.chars().cycle().take(needed).collect();
@@ -698,6 +763,31 @@ fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
         } else {
             Ok(obj_str)
         }
+    })?;
+
+    // MEDIAN(expr) — custom aggregate; returns the median of non-NULL values
+    conn.create_aggregate_function(
+        "median",
+        1,
+        FunctionFlags::SQLITE_UTF8,
+        MedianAgg,
+    )?;
+
+    // WIDTH_BUCKET(val, min, max, num_buckets) — equiwidth histogram bucket assignment
+    // Returns 0 if val < min, num_buckets+1 if val >= max, else bucket 1..num_buckets
+    conn.create_scalar_function("width_bucket", 4, det, |ctx| {
+        let val: f64 = ctx.get(0)?;
+        let min: f64 = ctx.get(1)?;
+        let max: f64 = ctx.get(2)?;
+        let buckets: i64 = ctx.get(3)?;
+        if val < min {
+            return Ok(0i64);
+        }
+        if val >= max {
+            return Ok(buckets + 1);
+        }
+        let bucket = ((val - min) / (max - min) * buckets as f64).floor() as i64 + 1;
+        Ok(bucket)
     })?;
 
     Ok(())

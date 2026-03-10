@@ -207,6 +207,74 @@ impl FromValue for Vec<u8> {
     }
 }
 
+impl FromValue for i16 {
+    fn from_value(v: &Value) -> Result<Self> {
+        i64::from_value(v).and_then(|i| {
+            i16::try_from(i).map_err(|_| Error::TypeConversion {
+                expected: "i16",
+                actual: format!("INTEGER({i}) is out of range for i16"),
+            })
+        })
+    }
+}
+
+impl FromValue for u32 {
+    fn from_value(v: &Value) -> Result<Self> {
+        i64::from_value(v).and_then(|i| {
+            u32::try_from(i).map_err(|_| Error::TypeConversion {
+                expected: "u32",
+                actual: format!("INTEGER({i}) is out of range for u32"),
+            })
+        })
+    }
+}
+
+impl FromValue for i8 {
+    fn from_value(v: &Value) -> Result<Self> {
+        i64::from_value(v).and_then(|i| {
+            i8::try_from(i).map_err(|_| Error::TypeConversion {
+                expected: "i8",
+                actual: format!("INTEGER({i}) is out of range for i8"),
+            })
+        })
+    }
+}
+
+impl FromValue for u8 {
+    fn from_value(v: &Value) -> Result<Self> {
+        i64::from_value(v).and_then(|i| {
+            u8::try_from(i).map_err(|_| Error::TypeConversion {
+                expected: "u8",
+                actual: format!("INTEGER({i}) is out of range for u8"),
+            })
+        })
+    }
+}
+
+impl FromValue for serde_json::Value {
+    fn from_value(v: &Value) -> Result<Self> {
+        match v {
+            Value::Text(s) => serde_json::from_str(s).map_err(|_| Error::TypeConversion {
+                expected: "serde_json::Value",
+                actual: format!("TEXT is not valid JSON: '{s}'"),
+            }),
+            Value::Null => Ok(serde_json::Value::Null),
+            Value::Integer(i) => Ok(serde_json::Value::Number((*i).into())),
+            Value::Real(r) => serde_json::Number::from_f64(*r)
+                .map(serde_json::Value::Number)
+                .ok_or_else(|| Error::TypeConversion {
+                    expected: "serde_json::Value",
+                    actual: format!("REAL({r}) is not representable as a JSON number"),
+                }),
+            Value::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
+            Value::Blob(b) => Err(Error::TypeConversion {
+                expected: "serde_json::Value",
+                actual: format!("BLOB ({} bytes) cannot be converted to JSON", b.len()),
+            }),
+        }
+    }
+}
+
 impl<T: FromValue> FromValue for Option<T> {
     fn from_value(v: &Value) -> Result<Self> {
         match v {

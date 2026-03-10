@@ -21,8 +21,24 @@ use regex::Regex;
 
 /// Rewrite all Snowflake type annotations in a DDL statement to SQLite affinities.
 pub fn rewrite_types(sql: &str) -> String {
+    warn_geo_types(sql);
     let sql = rewrite_number_type(sql);
     rewrite_simple_types(&sql)
+}
+
+/// Log a warning when spatial types (GEOGRAPHY / GEOMETRY) are encountered.
+///
+/// These types are mapped to TEXT; spatial predicates and functions will not work.
+fn warn_geo_types(sql: &str) {
+    static RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\b(GEOGRAPHY|GEOMETRY)\b").expect("valid geo type regex")
+    });
+    for cap in RE.captures_iter(sql) {
+        log::warn!(
+            "Snowflake type '{}' is not supported by SQLite — mapped to TEXT; spatial queries will not work",
+            &cap[1]
+        );
+    }
 }
 
 /// Rewrite `NUMBER(p,s)`, `DECIMAL(p,s)`, `NUMERIC(p,s)`.
@@ -88,6 +104,9 @@ fn rewrite_simple_types(sql: &str) -> String {
         (r"(?i)\bVARBINARY\s*(?:\(\s*\d+\s*\))?", "BLOB"),
         (r"(?i)\bBINARY\s*(?:\(\s*\d+\s*\))?", "BLOB"),
         (r"(?i)\bBYTES\s*(?:\(\s*\d+\s*\))?", "BLOB"),
+        // Spatial types — not supported by SQLite; map to TEXT
+        (r"(?i)\bGEOGRAPHY\b", "TEXT"),
+        (r"(?i)\bGEOMETRY\b", "TEXT"),
     ];
 
     let mut result = sql.to_owned();

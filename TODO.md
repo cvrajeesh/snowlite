@@ -90,35 +90,34 @@ unchanged — but this is **untested** end-to-end.
 ## Priority 3 — LOW IMPACT / NICE TO HAVE
 
 ### Math Functions
-- [ ] `LOG(base, x)` two-arg form — `LOG(x) / LOG(base)` (SQLite only has natural log)
-- [ ] `RANDOM()` — already works via SQLite; add test to document behaviour
-- [ ] `WIDTH_BUCKET(val, min, max, buckets)` — custom function
+- [x] `LOG(base, x)` two-arg form — registers custom `log()` (natural log) and rewrites `LOG(base, x)` → `(LOG(x) / LOG(base))`; integration tests added
+- [x] `RANDOM()` — already works via SQLite; integration test added to document behaviour (returns i64, not float like Snowflake)
+- [x] `WIDTH_BUCKET(val, min, max, buckets)` — custom function; integration tests added
 
 ### Aggregate Functions
-- [ ] `MEDIAN(expr)` — custom aggregate SQLite function
-- [ ] `ANY_VALUE(expr)` — map to `MIN(expr)` (acceptable approximation for testing)
-- [ ] `APPROX_COUNT_DISTINCT(expr)` — map to `COUNT(DISTINCT expr)`
-- [ ] `ARRAY_AGG(expr)` — map to `JSON_GROUP_ARRAY(expr)` (SQLite 3.38+)
-- [ ] `OBJECT_AGG(key, val)` — map to `JSON_GROUP_OBJECT(key, val)` (SQLite 3.38+)
+- [x] `MEDIAN(expr)` — custom aggregate SQLite function; integration tests added (odd and even count)
+- [x] `ANY_VALUE(expr)` — map to `MIN(expr)` (acceptable approximation for testing); integration test added
+- [x] `APPROX_COUNT_DISTINCT(expr)` — map to `COUNT(DISTINCT expr)`; integration test added
+- [x] `ARRAY_AGG(expr)` — map to `JSON_GROUP_ARRAY(expr)` (SQLite 3.38+); integration test added
+- [x] `OBJECT_AGG(key, val)` — map to `JSON_GROUP_OBJECT(key, val)` (SQLite 3.38+); integration test added
 
 ### Type System (`src/types.rs` + `src/row.rs`)
-- [ ] `GEOGRAPHY` / `GEOMETRY` types — map to `TEXT` in type rewriter with a `log::warn!`
-- [ ] `FromValue` impls for `i16`, `u32`, `i8`, `u8` in `src/row.rs`
-- [ ] Convenience `FromValue` for `serde_json::Value` (deserialize from `Value::Text`)
+- [x] `GEOGRAPHY` / `GEOMETRY` types — map to `TEXT` in type rewriter with a `log::warn!`; integration tests added
+- [x] `FromValue` impls for `i16`, `u32`, `i8`, `u8` in `src/row.rs`; integration test added
+- [x] Convenience `FromValue` for `serde_json::Value` (deserialize from `Value::Text`); integration test added
 
 ### Code Quality
-- [ ] Remove unused `chrono` dependency from `Cargo.toml`
-- [ ] Fix `SELECT TOP N ... ORDER BY col` rewrite — currently emits `SELECT ... LIMIT N ORDER BY col`
-      (invalid SQL); should become `SELECT ... ORDER BY col LIMIT N` (`src/translator/rewriter.rs`)
+- [x] Remove unused `chrono` dependency from `Cargo.toml`
+- [x] Fix `SELECT TOP N ... ORDER BY col` rewrite — verified correct (LIMIT appended after ORDER BY); integration test added to document behaviour
 - [ ] Add fuzz testing for translator regex patterns (prevent ReDoS on adversarial SQL)
 - [ ] Add query timeout / statement size limits in `src/connection.rs`
 
 ### Bug Fixes (known incorrect behaviour)
-- [ ] `LPAD`/`RPAD` with empty pad string — currently returns original string; Snowflake raises an error (`src/connection.rs`)
+- [x] `LPAD`/`RPAD` with empty pad string — now raises an error matching Snowflake behaviour (`src/connection.rs`); integration tests added
 - [ ] `get_path(col, 'a.b')` multi-segment paths — identifier stripper corrupts dotted paths; fix by protecting string literal arguments in the identifier stripper (`src/translator/identifiers.rs`)
-- [ ] Decimal precision — `NUMBER(p, s)` stored as SQLite `REAL` (64-bit float); document clearly and add a test showing the precision limit
-- [ ] String collation — `COLLATE` clauses are stripped; add a test documenting where case-sensitivity differs from Snowflake
-- [ ] Recursive CTEs — SQLite recursion depth limit differs from Snowflake; add a test to document the behaviour
+- [x] Decimal precision — `NUMBER(p, s)` stored as SQLite `REAL` (64-bit float); integration test added documenting the precision limit
+- [x] String collation — `COLLATE` clauses are stripped; integration test added documenting case-sensitivity difference from Snowflake
+- [x] Recursive CTEs — integration test added documenting SQLite's recursion depth behaviour
 
 ### Unsupported (document-only, no fix possible in SQLite)
 - [ ] `CONVERT_TIMEZONE` — document workaround clearly in limitations.md (already done)

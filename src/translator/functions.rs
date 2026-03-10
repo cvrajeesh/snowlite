@@ -28,6 +28,7 @@ impl Rule {
 /// Apply all function translation rules to the SQL string.
 pub fn rewrite_functions(sql: &str) -> String {
     let sql = apply_simple_rules(sql);
+    let sql = rewrite_log_two_arg(&sql);
     let sql = rewrite_iff(&sql);
     let sql = rewrite_decode(&sql);
     let sql = rewrite_nvl2(&sql);
@@ -139,6 +140,11 @@ static SIMPLE_RULES: Lazy<Vec<Rule>> = Lazy::new(|| {
         // TYPEOF — Snowflake's TYPEOF inspects VARIANT type; translate to custom function
         // to distinguish from SQLite's built-in typeof() which returns storage class names
         Rule::new(r"(?i)\bTYPEOF\s*\(", "snowflake_typeof("),
+        // Aggregate functions — translate to SQLite equivalents
+        Rule::new(r"(?i)\bANY_VALUE\s*\(", "MIN("),
+        Rule::new(r"(?i)\bAPPROX_COUNT_DISTINCT\s*\(", "COUNT(DISTINCT "),
+        Rule::new(r"(?i)\bARRAY_AGG\s*\(", "JSON_GROUP_ARRAY("),
+        Rule::new(r"(?i)\bOBJECT_AGG\s*\(", "JSON_GROUP_OBJECT("),
         // Semi-structured — ARRAY_SIZE
         Rule::new(r"(?i)\bARRAY_SIZE\s*\(([^)]+)\)", "JSON_ARRAY_LENGTH($1)"),
         Rule::new(r"(?i)\bARRAY_LENGTH\s*\(([^)]+)\)", "JSON_ARRAY_LENGTH($1)"),
@@ -157,6 +163,45 @@ fn apply_simple_rules(sql: &str) -> String {
     let mut result = sql.to_owned();
     for rule in SIMPLE_RULES.iter() {
         result = rule.apply(&result);
+    }
+    result
+}
+
+// ── LOG two-arg form ─────────────────────────────────────────────────────────
+
+/// Translate `LOG(base, x)` (Snowflake two-arg form) to `(LOG(x) / LOG(base))`.
+///
+/// Single-arg `LOG(x)` is left unchanged — SQLite's built-in `LOG()` handles it.
+pub fn rewrite_log_two_arg(sql: &str) -> String {
+    static RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)\bLOG\s*\(").expect("valid LOG regex"));
+
+    let mut result = String::with_capacity(sql.len());
+    let mut i = 0;
+
+    while i < sql.len() {
+        if let Some(m) = RE.find(&sql[i..]) {
+            result.push_str(&sql[i..i + m.start()]);
+            i += m.end();
+
+            if let Some(args_content) = extract_parenthesized(&sql[i..]) {
+                let parts = split_args(args_content);
+                if parts.len() == 2 {
+                    let base = parts[0].trim();
+                    let x = parts[1].trim();
+                    result.push_str(&format!("(LOG({x}) / LOG({base}))"));
+                    i += args_content.len() + 1; // +1 for closing ')'
+                } else {
+                    // Single-arg or other — pass through; don't consume args
+                    result.push_str("LOG(");
+                }
+            } else {
+                result.push_str("LOG(");
+            }
+        } else {
+            result.push_str(&sql[i..]);
+            break;
+        }
     }
     result
 }

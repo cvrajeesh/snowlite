@@ -904,7 +904,6 @@ fn date_trunc_hour_and_minute() {
 // ── NULL / Conditional functions ──────────────────────────────────────────────
 
 #[test]
-#[ignore = "ZEROIFNULL translation is incomplete: ZEROIFNULL(x) → COALESCE(x) missing the second 0 argument (see failure plan item 19)"]
 fn zeroifnull_function() {
     let c = conn();
     c.execute("CREATE TABLE t (v REAL)", &[]).unwrap();

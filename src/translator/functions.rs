@@ -46,7 +46,7 @@ static SIMPLE_RULES: Lazy<Vec<Rule>> = Lazy::new(|| {
     vec![
         // NULL-handling
         Rule::new(r"(?i)\bNVL\s*\(", "COALESCE("),
-        Rule::new(r"(?i)\bZEROIFNULL\s*\(", "COALESCE("),
+        Rule::new(r"(?i)\bZEROIFNULL\s*\(([^)]+)\)", "COALESCE($1, 0)"),
         Rule::new(r"(?i)\bNULLIFZERO\s*\(([^)]+)\)", "NULLIF($1, 0)"),
         Rule::new(r"(?i)\bEMPTYTONULL\s*\(([^)]+)\)", "NULLIF($1, '')"),
         // Boolean logic

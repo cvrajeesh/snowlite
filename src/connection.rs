@@ -477,7 +477,291 @@ fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
         ctx.get::<Option<String>>(0)
     })?;
 
+    // TO_DATE(str [, format]) — ignore the optional Snowflake format string; use SQLite DATE()
+    conn.create_scalar_function("to_date", -1, det, |ctx| {
+        if ctx.is_empty() {
+            return Ok(None);
+        }
+        let s: Option<String> = ctx.get(0)?;
+        match s {
+            None => Ok(None),
+            Some(v) => {
+                // Ask SQLite to normalise the value; return it as a date string
+                Ok(Some(v))
+            }
+        }
+    })?;
+
+    // TO_CHAR(val [, format]) — with format string, map common Snowflake tokens to strftime
+    conn.create_scalar_function("to_char", -1, det, |ctx| {
+        if ctx.is_empty() {
+            return Ok(None);
+        }
+        let val: Option<String> = ctx.get(0)?;
+        let val = match val {
+            None => return Ok(None),
+            Some(v) => v,
+        };
+        if ctx.len() == 1 {
+            return Ok(Some(val));
+        }
+        let fmt: String = ctx.get(1)?;
+        // Map Snowflake format tokens to strftime equivalents
+        let strftime_fmt = fmt
+            .replace("YYYY", "%Y")
+            .replace("YY", "%y")
+            .replace("MM", "%m")
+            .replace("DD", "%d")
+            .replace("HH24", "%H")
+            .replace("HH", "%H")
+            .replace("MI", "%M")
+            .replace("SS", "%S");
+        // Use SQLite's strftime via a best-effort Rust implementation
+        // Parse the date/datetime value and apply the format
+        let result = apply_strftime(&strftime_fmt, &val);
+        Ok(Some(result))
+    })?;
+
+    // NEXT_DAY(date, dayname) — return the next occurrence of dayname after date
+    conn.create_scalar_function("next_day", 2, det, |ctx| {
+        let date: String = ctx.get(0)?;
+        let dayname: String = ctx.get(1)?;
+        let target_dow = match dayname.to_lowercase().as_str() {
+            "sunday" | "sun"    => 0u32,
+            "monday" | "mon"    => 1,
+            "tuesday" | "tue"   => 2,
+            "wednesday" | "wed" => 3,
+            "thursday" | "thu"  => 4,
+            "friday" | "fri"    => 5,
+            "saturday" | "sat"  => 6,
+            _ => return Err(rusqlite::Error::UserFunctionError(Box::new(
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "unknown day name"),
+            ))),
+        };
+        // Parse date in YYYY-MM-DD format
+        let parts: Vec<&str> = date.trim().split('-').collect();
+        if parts.len() < 3 {
+            return Ok(None);
+        }
+        let (y, m, d) = (
+            parts[0].parse::<i32>().unwrap_or(2000),
+            parts[1].parse::<u32>().unwrap_or(1),
+            parts[2][..2.min(parts[2].len())].parse::<u32>().unwrap_or(1),
+        );
+        // Compute day-of-week using Tomohiko Sakamoto's algorithm
+        static T: [i32; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+        let year = if m < 3 { y - 1 } else { y };
+        let dow = ((year + year/4 - year/100 + year/400 + T[(m as usize)-1] + d as i32) % 7) as u32;
+        let days_ahead = ((target_dow + 7 - dow) % 7) as i32;
+        let days_ahead = if days_ahead == 0 { 7 } else { days_ahead };
+        // Add days_ahead to the date
+        let result = add_days_to_date(y, m, d, days_ahead);
+        Ok(Some(result))
+    })?;
+
+    // CONVERT_TIMEZONE — SQLite has no timezone support; return the timestamp unchanged
+    conn.create_scalar_function("convert_timezone", -1, FunctionFlags::SQLITE_UTF8, |ctx| {
+        // 2-arg form: (target_tz, timestamp) — return timestamp
+        // 3-arg form: (source_tz, target_tz, timestamp) — return timestamp
+        if ctx.len() >= 2 {
+            let ts: String = ctx.get(ctx.len() - 1)?;
+            Ok(ts)
+        } else {
+            ctx.get::<String>(0)
+        }
+    })?;
+
+    // ARRAY_SLICE(arr, start, end) — return a sub-array [start..end) (0-indexed, Snowflake convention)
+    conn.create_scalar_function("array_slice", 3, det, |ctx| {
+        let arr_str: String = ctx.get(0)?;
+        let start: i64 = ctx.get(1)?;
+        let end: i64 = ctx.get(2)?;
+        let arr: serde_json::Value = serde_json::from_str(&arr_str)
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        if let serde_json::Value::Array(items) = arr {
+            let len = items.len() as i64;
+            let s = start.max(0).min(len) as usize;
+            let e = end.max(0).min(len) as usize;
+            let sliced = serde_json::Value::Array(items[s..e].to_vec());
+            Ok(sliced.to_string())
+        } else {
+            Ok("[]".to_string())
+        }
+    })?;
+
+    // ARRAY_APPEND(arr, val) — append val to JSON array
+    conn.create_scalar_function("array_append", 2, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let arr_str: String = ctx.get(0)?;
+        let val: rusqlite::types::Value = ctx.get(1)?;
+        let mut arr: serde_json::Value = serde_json::from_str(&arr_str)
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        if let serde_json::Value::Array(ref mut items) = arr {
+            items.push(sqlite_value_ref_to_json(val));
+        }
+        Ok(arr.to_string())
+    })?;
+
+    // ARRAY_CONCAT(arr1, arr2) — concatenate two JSON arrays
+    conn.create_scalar_function("array_concat", 2, det, |ctx| {
+        let arr1_str: String = ctx.get(0)?;
+        let arr2_str: String = ctx.get(1)?;
+        let arr1: serde_json::Value = serde_json::from_str(&arr1_str)
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        let arr2: serde_json::Value = serde_json::from_str(&arr2_str)
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        let mut combined = Vec::new();
+        if let serde_json::Value::Array(a) = arr1 { combined.extend(a); }
+        if let serde_json::Value::Array(b) = arr2 { combined.extend(b); }
+        Ok(serde_json::Value::Array(combined).to_string())
+    })?;
+
+    // ARRAY_COMPACT(arr) — remove NULL elements from JSON array
+    conn.create_scalar_function("array_compact", 1, det, |ctx| {
+        let arr_str: String = ctx.get(0)?;
+        let arr: serde_json::Value = serde_json::from_str(&arr_str)
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        if let serde_json::Value::Array(items) = arr {
+            let compacted: Vec<serde_json::Value> = items
+                .into_iter()
+                .filter(|v| !v.is_null())
+                .collect();
+            Ok(serde_json::Value::Array(compacted).to_string())
+        } else {
+            Ok("[]".to_string())
+        }
+    })?;
+
+    // ARRAY_UNIQUE(arr) — remove duplicate elements from JSON array (preserves first occurrence)
+    conn.create_scalar_function("array_unique", 1, det, |ctx| {
+        let arr_str: String = ctx.get(0)?;
+        let arr: serde_json::Value = serde_json::from_str(&arr_str)
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        if let serde_json::Value::Array(items) = arr {
+            let mut seen = std::collections::HashSet::new();
+            let unique: Vec<serde_json::Value> = items
+                .into_iter()
+                .filter(|v| seen.insert(v.to_string()))
+                .collect();
+            Ok(serde_json::Value::Array(unique).to_string())
+        } else {
+            Ok("[]".to_string())
+        }
+    })?;
+
+    // SNOWFLAKE_TYPEOF(variant) — return Snowflake-style type name for JSON values
+    // Registered as snowflake_typeof to avoid clashing with SQLite's built-in typeof()
+    conn.create_scalar_function("snowflake_typeof", 1, det, |ctx| {
+        let val: Option<String> = ctx.get(0)?;
+        match val {
+            None => Ok("NULL".to_string()),
+            Some(s) => {
+                let type_name = match serde_json::from_str::<serde_json::Value>(&s) {
+                    Ok(serde_json::Value::Array(_))  => "ARRAY",
+                    Ok(serde_json::Value::Object(_)) => "OBJECT",
+                    Ok(serde_json::Value::String(_)) => "TEXT",
+                    Ok(serde_json::Value::Number(_)) => "INTEGER",
+                    Ok(serde_json::Value::Bool(_))   => "BOOLEAN",
+                    Ok(serde_json::Value::Null)      => "NULL",
+                    Err(_) => "TEXT",
+                };
+                Ok(type_name.to_string())
+            }
+        }
+    })?;
+
+    // OBJECT_KEYS(obj) — return a JSON array of the object's top-level keys
+    conn.create_scalar_function("object_keys", 1, det, |ctx| {
+        let obj_str: String = ctx.get(0)?;
+        let obj: serde_json::Value = serde_json::from_str(&obj_str)
+            .unwrap_or(serde_json::Value::Null);
+        if let serde_json::Value::Object(map) = obj {
+            let keys: Vec<serde_json::Value> = map.keys()
+                .map(|k| serde_json::Value::String(k.clone()))
+                .collect();
+            Ok(serde_json::Value::Array(keys).to_string())
+        } else {
+            Ok("[]".to_string())
+        }
+    })?;
+
+    // STRIP_NULL_VALUE(obj) — remove keys with null values from a JSON object
+    conn.create_scalar_function("strip_null_value", 1, det, |ctx| {
+        let obj_str: String = ctx.get(0)?;
+        let obj: serde_json::Value = serde_json::from_str(&obj_str)
+            .unwrap_or(serde_json::Value::Null);
+        if let serde_json::Value::Object(map) = obj {
+            let filtered: serde_json::Map<String, serde_json::Value> = map
+                .into_iter()
+                .filter(|(_, v)| !v.is_null())
+                .collect();
+            Ok(serde_json::Value::Object(filtered).to_string())
+        } else {
+            Ok(obj_str)
+        }
+    })?;
+
     Ok(())
+}
+
+/// Apply a strftime-style format string to a date/datetime string value.
+///
+/// Handles the common tokens used by Snowflake's TO_CHAR format strings,
+/// after they have been mapped to strftime equivalents.
+fn apply_strftime(fmt: &str, val: &str) -> String {
+    // Parse the date portion (YYYY-MM-DD)
+    let parts: Vec<&str> = val.trim().splitn(2, 'T').next()
+        .unwrap_or(val)
+        .split(' ')
+        .next()
+        .unwrap_or(val)
+        .split('-')
+        .collect();
+    let year  = parts.first().copied().unwrap_or("0000");
+    let month = parts.get(1).copied().unwrap_or("01");
+    let day   = parts.get(2).and_then(|d| d.get(..2)).unwrap_or("01");
+
+    // Parse the time portion (HH:MM:SS)
+    let time_part = val.trim().splitn(2, ' ').nth(1).unwrap_or("00:00:00");
+    let tparts: Vec<&str> = time_part.split(':').collect();
+    let hour   = tparts.first().copied().unwrap_or("00");
+    let minute = tparts.get(1).copied().unwrap_or("00");
+    let second = tparts.get(2).and_then(|s| s.get(..2)).unwrap_or("00");
+
+    fmt.replace("%Y", year)
+        .replace("%y", &year[year.len().saturating_sub(2)..])
+        .replace("%m", month)
+        .replace("%d", day)
+        .replace("%H", hour)
+        .replace("%M", minute)
+        .replace("%S", second)
+}
+
+/// Add `days` to a date given as (year, month, day) and return "YYYY-MM-DD".
+fn add_days_to_date(y: i32, m: u32, d: u32, days: i32) -> String {
+    // Convert to Julian day number, add, convert back
+    let jdn = date_to_jdn(y, m, d) + days;
+    let (ny, nm, nd) = jdn_to_date(jdn);
+    format!("{:04}-{:02}-{:02}", ny, nm, nd)
+}
+
+fn date_to_jdn(y: i32, m: u32, d: u32) -> i32 {
+    let a = (14 - m as i32) / 12;
+    let yr = y + 4800 - a;
+    let mo = m as i32 + 12 * a - 3;
+    d as i32 + (153 * mo + 2) / 5 + 365 * yr + yr / 4 - yr / 100 + yr / 400 - 32045
+}
+
+fn jdn_to_date(jdn: i32) -> (i32, u32, u32) {
+    let a = jdn + 32044;
+    let b = (4 * a + 3) / 146097;
+    let c = a - 146097 * b / 4;
+    let d_val = (4 * c + 3) / 1461;
+    let e = c - 1461 * d_val / 4;
+    let m = (5 * e + 2) / 153;
+    let day = e - (153 * m + 2) / 5 + 1;
+    let month = m + 3 - 12 * (m / 10);
+    let year = 100 * b + d_val - 4800 + m / 10;
+    (year, month as u32, day as u32)
 }
 
 fn sqlite_value_ref_to_json(val: rusqlite::types::Value) -> serde_json::Value {

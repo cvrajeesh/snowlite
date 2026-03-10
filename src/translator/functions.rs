@@ -34,6 +34,11 @@ pub fn rewrite_functions(sql: &str) -> String {
     let sql = rewrite_dateadd(&sql);
     let sql = rewrite_datediff(&sql);
     let sql = rewrite_date_trunc(&sql);
+    let sql = rewrite_extract(&sql);
+    let sql = rewrite_date_from_parts(&sql);
+    let sql = rewrite_time_from_parts(&sql);
+    let sql = rewrite_timestamp_from_parts(&sql);
+    let sql = rewrite_cast_operator(&sql);
     let sql = rewrite_listagg(&sql);
     let sql = rewrite_semi_structured_paths(&sql);
     let sql = rewrite_ilike(&sql);
@@ -59,14 +64,15 @@ static SIMPLE_RULES: Lazy<Vec<Rule>> = Lazy::new(|| {
         ),
         // Type conversions
         Rule::new(r"(?i)\bTO_VARCHAR\s*\(([^)]+)\)", "CAST($1 AS TEXT)"),
-        Rule::new(r"(?i)\bTO_CHAR\s*\(([^)]+)\)", "CAST($1 AS TEXT)"),
+        // TO_CHAR and TO_DATE are registered as custom SQLite functions to support
+        // the optional two-arg forms with Snowflake format strings.
         Rule::new(r"(?i)\bTO_NUMBER\s*\(([^)]+)\)", "CAST($1 AS REAL)"),
         Rule::new(r"(?i)\bTO_NUMERIC\s*\(([^)]+)\)", "CAST($1 AS REAL)"),
         Rule::new(r"(?i)\bTO_DECIMAL\s*\(([^)]+)\)", "CAST($1 AS REAL)"),
         Rule::new(r"(?i)\bTO_DOUBLE\s*\(([^)]+)\)", "CAST($1 AS REAL)"),
         Rule::new(r"(?i)\bTO_BOOLEAN\s*\(([^)]+)\)", "CAST($1 AS INTEGER)"),
         Rule::new(r"(?i)\bTO_BINARY\s*\(([^)]+)\)", "CAST($1 AS BLOB)"),
-        Rule::new(r"(?i)\bTO_DATE\s*\(([^)]+)\)", "DATE($1)"),
+        // TO_DATE is a custom function (handles optional format string arg)
         Rule::new(r"(?i)\bTO_TIME\s*\(([^)]+)\)", "TIME($1)"),
         Rule::new(r"(?i)\bTO_TIMESTAMP\s*\(([^)]+)\)", "DATETIME($1)"),
         Rule::new(r"(?i)\bTO_TIMESTAMP_NTZ\s*\(([^)]+)\)", "DATETIME($1)"),
@@ -120,6 +126,19 @@ static SIMPLE_RULES: Lazy<Vec<Rule>> = Lazy::new(|| {
         // GREATEST / LEAST — SQLite multi-arg MAX/MIN are scalar when called with 2+ args
         Rule::new(r"(?i)\bGREATEST\s*\(", "MAX("),
         Rule::new(r"(?i)\bLEAST\s*\(", "MIN("),
+        // LAST_DAY — compute last day of the month containing the given date
+        Rule::new(
+            r"(?i)\bLAST_DAY\s*\(([^)]+)\)",
+            "DATE($1, 'start of month', '+1 month', '-1 day')",
+        ),
+        // CREATE TRANSIENT TABLE — strip TRANSIENT keyword; treat as normal CREATE TABLE
+        Rule::new(
+            r"(?i)\bCREATE\s+TRANSIENT\s+TABLE\b",
+            "CREATE TABLE",
+        ),
+        // TYPEOF — Snowflake's TYPEOF inspects VARIANT type; translate to custom function
+        // to distinguish from SQLite's built-in typeof() which returns storage class names
+        Rule::new(r"(?i)\bTYPEOF\s*\(", "snowflake_typeof("),
         // Semi-structured — ARRAY_SIZE
         Rule::new(r"(?i)\bARRAY_SIZE\s*\(([^)]+)\)", "JSON_ARRAY_LENGTH($1)"),
         Rule::new(r"(?i)\bARRAY_LENGTH\s*\(([^)]+)\)", "JSON_ARRAY_LENGTH($1)"),
@@ -566,6 +585,185 @@ pub fn rewrite_top_n(sql: &str) -> String {
     } else {
         sql.to_owned()
     }
+}
+
+// ── EXTRACT ──────────────────────────────────────────────────────────────────
+
+/// Translate `EXTRACT(part FROM expr)` to the equivalent `STRFTIME`/arithmetic expression.
+pub fn rewrite_extract(sql: &str) -> String {
+    static RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\bEXTRACT\s*\(\s*(EPOCH|YEAR|QUARTER|MONTH|WEEK|DOW|DOY|DAY|HOUR|MINUTE|SECOND)\s+FROM\s+")
+            .expect("valid EXTRACT regex")
+    });
+
+    let mut result = String::with_capacity(sql.len());
+    let mut i = 0;
+
+    while i < sql.len() {
+        if let Some(m) = RE.find(&sql[i..]) {
+            result.push_str(&sql[i..i + m.start()]);
+            let part = {
+                // Extract the unit keyword from the match
+                let caps = RE.captures(&sql[i + m.start()..]).unwrap();
+                caps[1].to_ascii_uppercase()
+            };
+            i += m.end();
+
+            // Find the matching closing paren for the EXTRACT expression
+            if let Some(expr_content) = extract_parenthesized(&sql[i..]) {
+                let expr = expr_content.trim();
+                let replacement = match part.as_str() {
+                    "YEAR"    => format!("CAST(STRFTIME('%Y', {expr}) AS INTEGER)"),
+                    "MONTH"   => format!("CAST(STRFTIME('%m', {expr}) AS INTEGER)"),
+                    "DAY"     => format!("CAST(STRFTIME('%d', {expr}) AS INTEGER)"),
+                    "HOUR"    => format!("CAST(STRFTIME('%H', {expr}) AS INTEGER)"),
+                    "MINUTE"  => format!("CAST(STRFTIME('%M', {expr}) AS INTEGER)"),
+                    "SECOND"  => format!("CAST(STRFTIME('%S', {expr}) AS INTEGER)"),
+                    "DOW"     => format!("CAST(STRFTIME('%w', {expr}) AS INTEGER)"),
+                    "DOY"     => format!("CAST(STRFTIME('%j', {expr}) AS INTEGER)"),
+                    "WEEK"    => format!("CAST(STRFTIME('%W', {expr}) AS INTEGER)"),
+                    "EPOCH"   => format!("CAST(STRFTIME('%s', {expr}) AS INTEGER)"),
+                    "QUARTER" => format!("((CAST(STRFTIME('%m', {expr}) AS INTEGER) + 2) / 3)"),
+                    _         => format!("EXTRACT({part} FROM {expr})"),
+                };
+                result.push_str(&replacement);
+                i += expr_content.len() + 1; // +1 for closing ')'
+            } else {
+                result.push_str(&format!("EXTRACT({part} FROM "));
+            }
+        } else {
+            result.push_str(&sql[i..]);
+            break;
+        }
+    }
+    result
+}
+
+// ── DATE_FROM_PARTS / TIME_FROM_PARTS / TIMESTAMP_FROM_PARTS ─────────────────
+
+/// Translate `DATE_FROM_PARTS(year, month, day)` →
+/// `DATE(PRINTF('%04d-%02d-%02d', year, month, day))`.
+pub fn rewrite_date_from_parts(sql: &str) -> String {
+    static RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\bDATE_FROM_PARTS\s*\(").expect("valid DATE_FROM_PARTS regex")
+    });
+
+    let mut result = String::with_capacity(sql.len());
+    let mut i = 0;
+
+    while i < sql.len() {
+        if let Some(m) = RE.find(&sql[i..]) {
+            result.push_str(&sql[i..i + m.start()]);
+            i += m.end();
+            if let Some(args_content) = extract_parenthesized(&sql[i..]) {
+                let parts = split_args(args_content);
+                if parts.len() == 3 {
+                    let (y, m_part, d) = (parts[0].trim(), parts[1].trim(), parts[2].trim());
+                    result.push_str(&format!(
+                        "DATE(PRINTF('%04d-%02d-%02d', {y}, {m_part}, {d}))"
+                    ));
+                    i += args_content.len() + 1;
+                } else {
+                    result.push_str("DATE_FROM_PARTS(");
+                }
+            } else {
+                result.push_str("DATE_FROM_PARTS(");
+            }
+        } else {
+            result.push_str(&sql[i..]);
+            break;
+        }
+    }
+    result
+}
+
+/// Translate `TIME_FROM_PARTS(hour, minute, second)` →
+/// `TIME(PRINTF('%02d:%02d:%02d', hour, minute, second))`.
+pub fn rewrite_time_from_parts(sql: &str) -> String {
+    static RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\bTIME_FROM_PARTS\s*\(").expect("valid TIME_FROM_PARTS regex")
+    });
+
+    let mut result = String::with_capacity(sql.len());
+    let mut i = 0;
+
+    while i < sql.len() {
+        if let Some(m) = RE.find(&sql[i..]) {
+            result.push_str(&sql[i..i + m.start()]);
+            i += m.end();
+            if let Some(args_content) = extract_parenthesized(&sql[i..]) {
+                let parts = split_args(args_content);
+                if parts.len() == 3 {
+                    let (h, min, s) = (parts[0].trim(), parts[1].trim(), parts[2].trim());
+                    result.push_str(&format!(
+                        "TIME(PRINTF('%02d:%02d:%02d', {h}, {min}, {s}))"
+                    ));
+                    i += args_content.len() + 1;
+                } else {
+                    result.push_str("TIME_FROM_PARTS(");
+                }
+            } else {
+                result.push_str("TIME_FROM_PARTS(");
+            }
+        } else {
+            result.push_str(&sql[i..]);
+            break;
+        }
+    }
+    result
+}
+
+/// Translate `TIMESTAMP_FROM_PARTS(y, m, d, hh, mm, ss)` →
+/// `DATETIME(PRINTF('%04d-%02d-%02d %02d:%02d:%02d', ...))`.
+pub fn rewrite_timestamp_from_parts(sql: &str) -> String {
+    static RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\bTIMESTAMP_FROM_PARTS\s*\(").expect("valid TIMESTAMP_FROM_PARTS regex")
+    });
+
+    let mut result = String::with_capacity(sql.len());
+    let mut i = 0;
+
+    while i < sql.len() {
+        if let Some(m) = RE.find(&sql[i..]) {
+            result.push_str(&sql[i..i + m.start()]);
+            i += m.end();
+            if let Some(args_content) = extract_parenthesized(&sql[i..]) {
+                let parts = split_args(args_content);
+                if parts.len() == 6 {
+                    let (y, mo, d, h, min, s) = (
+                        parts[0].trim(), parts[1].trim(), parts[2].trim(),
+                        parts[3].trim(), parts[4].trim(), parts[5].trim(),
+                    );
+                    result.push_str(&format!(
+                        "DATETIME(PRINTF('%04d-%02d-%02d %02d:%02d:%02d', {y}, {mo}, {d}, {h}, {min}, {s}))"
+                    ));
+                    i += args_content.len() + 1;
+                } else {
+                    result.push_str("TIMESTAMP_FROM_PARTS(");
+                }
+            } else {
+                result.push_str("TIMESTAMP_FROM_PARTS(");
+            }
+        } else {
+            result.push_str(&sql[i..]);
+            break;
+        }
+    }
+    result
+}
+
+// ── :: cast operator ─────────────────────────────────────────────────────────
+
+/// Translate Snowflake's `expr::TYPE` cast shorthand to `CAST(expr AS TYPE)`.
+///
+/// Handles simple left-hand sides: identifiers, quoted strings, and numeric literals.
+/// Complex expressions like `(a + b)::INTEGER` are not covered by this rewrite.
+pub fn rewrite_cast_operator(sql: &str) -> String {
+    static RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"([A-Za-z_]\w*|'[^']*'|\d+(?:\.\d+)?)\s*::\s*([A-Za-z_]\w*(?:\s*\(\s*\d+(?:\s*,\s*\d+)?\s*\))?)")
+            .expect("valid :: cast regex")
+    });
+    RE.replace_all(sql, "CAST($1 AS $2)").into_owned()
 }
 
 // ── Helper: nested-paren-aware argument splitting ─────────────────────────────

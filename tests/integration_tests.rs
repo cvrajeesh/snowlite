@@ -2622,3 +2622,299 @@ fn least_returns_null_on_null_arg() {
     let rows = c.query("SELECT LEAST(1, NULL, 3)", &[]).unwrap();
     assert!(rows[0].get::<Option<i64>>(0).unwrap().is_none());
 }
+
+// ── Priority 2: Date / Time Functions ────────────────────────────────────────
+
+#[test]
+fn extract_year_from_date() {
+    let c = conn();
+    let rows = c.query("SELECT EXTRACT(YEAR FROM '2024-03-15')", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 2024);
+}
+
+#[test]
+fn extract_month_from_date() {
+    let c = conn();
+    let rows = c.query("SELECT EXTRACT(MONTH FROM '2024-03-15')", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 3);
+}
+
+#[test]
+fn extract_day_from_date() {
+    let c = conn();
+    let rows = c.query("SELECT EXTRACT(DAY FROM '2024-03-15')", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 15);
+}
+
+#[test]
+fn extract_hour_from_timestamp() {
+    let c = conn();
+    let rows = c.query("SELECT EXTRACT(HOUR FROM '2024-03-15 10:30:45')", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 10);
+}
+
+#[test]
+fn extract_minute_from_timestamp() {
+    let c = conn();
+    let rows = c.query("SELECT EXTRACT(MINUTE FROM '2024-03-15 10:30:45')", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 30);
+}
+
+#[test]
+fn extract_second_from_timestamp() {
+    let c = conn();
+    let rows = c.query("SELECT EXTRACT(SECOND FROM '2024-03-15 10:30:45')", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 45);
+}
+
+#[test]
+fn extract_quarter_from_date() {
+    let c = conn();
+    let rows = c.query("SELECT EXTRACT(QUARTER FROM '2024-07-15')", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 3);
+}
+
+#[test]
+fn to_date_two_arg_form() {
+    // Second arg (format) should be ignored — we just parse the date string
+    let c = conn();
+    let rows = c.query("SELECT TO_DATE('2024-03-15', 'YYYY-MM-DD')", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "2024-03-15");
+}
+
+#[test]
+fn to_char_date_with_format() {
+    let c = conn();
+    let rows = c.query("SELECT TO_CHAR('2024-03-15', 'YYYY-MM-DD')", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "2024-03-15");
+}
+
+#[test]
+fn to_char_date_year_format() {
+    let c = conn();
+    let rows = c.query("SELECT TO_CHAR('2024-03-15', 'YYYY')", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "2024");
+}
+
+#[test]
+fn date_from_parts_basic() {
+    let c = conn();
+    let rows = c.query("SELECT DATE_FROM_PARTS(2024, 3, 15)", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "2024-03-15");
+}
+
+#[test]
+fn time_from_parts_basic() {
+    let c = conn();
+    let rows = c.query("SELECT TIME_FROM_PARTS(10, 30, 45)", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "10:30:45");
+}
+
+#[test]
+fn timestamp_from_parts_basic() {
+    let c = conn();
+    let rows = c.query("SELECT TIMESTAMP_FROM_PARTS(2024, 3, 15, 10, 30, 45)", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "2024-03-15 10:30:45");
+}
+
+#[test]
+fn last_day_of_january() {
+    let c = conn();
+    let rows = c.query("SELECT LAST_DAY('2024-01-15')", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "2024-01-31");
+}
+
+#[test]
+fn last_day_of_february_leap_year() {
+    let c = conn();
+    let rows = c.query("SELECT LAST_DAY('2024-02-10')", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "2024-02-29");
+}
+
+#[test]
+fn next_day_function() {
+    let c = conn();
+    // 2024-01-15 is a Monday; next Wednesday is 2024-01-17
+    let rows = c.query("SELECT NEXT_DAY('2024-01-15', 'Wednesday')", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "2024-01-17");
+}
+
+#[test]
+fn convert_timezone_passthrough() {
+    // CONVERT_TIMEZONE is not supported in SQLite — it returns the input timestamp unchanged
+    let c = conn();
+    let rows = c.query("SELECT CONVERT_TIMEZONE('UTC', '2024-03-15 10:00:00')", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "2024-03-15 10:00:00");
+}
+
+// ── Priority 2: :: Cast Operator ─────────────────────────────────────────────
+
+#[test]
+fn cast_operator_integer() {
+    let c = conn();
+    let rows = c.query("SELECT '42'::INTEGER", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 42);
+}
+
+#[test]
+fn cast_operator_text() {
+    let c = conn();
+    let rows = c.query("SELECT 42::TEXT", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "42");
+}
+
+#[test]
+fn cast_operator_on_column() {
+    let c = conn();
+    c.execute("CREATE TABLE t (v TEXT)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES ('99')", &[]).unwrap();
+    let rows = c.query("SELECT v::INTEGER FROM t", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 99);
+}
+
+// ── Priority 2: Semi-Structured Functions ─────────────────────────────────────
+
+#[test]
+fn array_slice_basic() {
+    let c = conn();
+    let rows = c.query("SELECT ARRAY_SLICE('[10,20,30,40,50]', 1, 3)", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed, serde_json::json!([20, 30]));
+}
+
+#[test]
+fn array_append_basic() {
+    let c = conn();
+    let rows = c.query("SELECT ARRAY_APPEND('[1,2,3]', 4)", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed, serde_json::json!([1, 2, 3, 4]));
+}
+
+#[test]
+fn array_concat_basic() {
+    let c = conn();
+    let rows = c.query("SELECT ARRAY_CONCAT('[1,2]', '[3,4]')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed, serde_json::json!([1, 2, 3, 4]));
+}
+
+#[test]
+fn array_compact_removes_nulls() {
+    let c = conn();
+    let rows = c.query("SELECT ARRAY_COMPACT('[1,null,2,null,3]')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed, serde_json::json!([1, 2, 3]));
+}
+
+#[test]
+fn array_unique_deduplicates() {
+    let c = conn();
+    let rows = c.query("SELECT ARRAY_UNIQUE('[1,2,1,3,2]')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    let mut parsed: Vec<i64> = serde_json::from_str(&result).unwrap();
+    parsed.sort();
+    assert_eq!(parsed, vec![1, 2, 3]);
+}
+
+#[test]
+fn typeof_array() {
+    let c = conn();
+    let rows = c.query("SELECT TYPEOF('[1,2,3]')", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap().to_lowercase(), "array");
+}
+
+#[test]
+fn typeof_object() {
+    let c = conn();
+    let rows = c.query("SELECT TYPEOF('{\"a\":1}')", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap().to_lowercase(), "object");
+}
+
+#[test]
+fn object_keys_basic() {
+    let c = conn();
+    let rows = c.query("SELECT OBJECT_KEYS('{\"a\":1,\"b\":2}')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    let mut keys: Vec<String> = serde_json::from_str(&result).unwrap();
+    keys.sort();
+    assert_eq!(keys, vec!["a", "b"]);
+}
+
+#[test]
+fn strip_null_value_basic() {
+    let c = conn();
+    let rows = c.query("SELECT STRIP_NULL_VALUE('{\"a\":1,\"b\":null,\"c\":3}')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert!(parsed.get("a").is_some());
+    assert!(parsed.get("b").is_none());
+    assert!(parsed.get("c").is_some());
+}
+
+// ── Priority 2: DDL Constructs ────────────────────────────────────────────────
+
+#[test]
+fn create_temporary_table() {
+    let c = conn();
+    c.execute("CREATE TEMPORARY TABLE tmp (id INTEGER, name TEXT)", &[]).unwrap();
+    c.execute("INSERT INTO tmp VALUES (1, 'hello')", &[]).unwrap();
+    let rows = c.query("SELECT name FROM tmp WHERE id = 1", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "hello");
+}
+
+#[test]
+fn create_transient_table() {
+    let c = conn();
+    // TRANSIENT should be stripped; treated as a normal CREATE TABLE
+    c.execute("CREATE TRANSIENT TABLE t_transient (id INTEGER, val TEXT)", &[]).unwrap();
+    c.execute("INSERT INTO t_transient VALUES (1, 'foo')", &[]).unwrap();
+    let rows = c.query("SELECT val FROM t_transient", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "foo");
+}
+
+#[test]
+fn alter_table_rename_column() {
+    let c = conn();
+    c.execute("CREATE TABLE t (id INTEGER, old_name TEXT)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES (1, 'alice')", &[]).unwrap();
+    c.execute("ALTER TABLE t RENAME COLUMN old_name TO new_name", &[]).unwrap();
+    let rows = c.query("SELECT new_name FROM t", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "alice");
+}
+
+#[test]
+fn create_database_is_noop() {
+    let c = conn();
+    // Should not error — silently ignored
+    c.execute("CREATE DATABASE mydb", &[]).unwrap();
+}
+
+#[test]
+fn drop_database_is_noop() {
+    let c = conn();
+    c.execute("DROP DATABASE mydb", &[]).unwrap();
+}
+
+#[test]
+fn analyze_is_noop() {
+    let c = conn();
+    c.execute("ANALYZE", &[]).unwrap();
+}
+
+// ── Priority 2: MERGE INTO (no-op) ───────────────────────────────────────────
+
+#[test]
+fn merge_into_is_noop() {
+    let c = conn();
+    c.execute("CREATE TABLE t (id INTEGER, val TEXT)", &[]).unwrap();
+    // MERGE INTO is a no-op — SQLite does not support it
+    c.execute(
+        "MERGE INTO t USING src ON t.id = src.id WHEN MATCHED THEN UPDATE SET t.val = src.val",
+        &[],
+    )
+    .unwrap();
+}

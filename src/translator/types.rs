@@ -54,12 +54,13 @@ fn rewrite_simple_types(sql: &str) -> String {
         (r"(?i)\bTIMESTAMP_NTZ\s*(?:\(\s*\d+\s*\))?", "TEXT"),
         (r"(?i)\bTIMESTAMP_LTZ\s*(?:\(\s*\d+\s*\))?", "TEXT"),
         (r"(?i)\bTIMESTAMP_TZ\s*(?:\(\s*\d+\s*\))?", "TEXT"),
-        (r"(?i)\bTIMESTAMP\s*(?:\(\s*\d+\s*\))?", "TEXT"),
+        // \b after TIMESTAMP prevents matching TIMESTAMP_FROM_PARTS function name
+        (r"(?i)\bTIMESTAMP\b\s*(?:\(\s*\d+\s*\))?", "TEXT"),
         // Datetime (MySQL-style, occasionally used)
         (r"(?i)\bDATETIME\s*(?:\(\s*\d+\s*\))?", "TEXT"),
-        // Date / Time
+        // Date / Time — \b after TIME prevents matching TIME_FROM_PARTS function name
         (r"(?i)\bDATE\b", "TEXT"),
-        (r"(?i)\bTIME\s*(?:\(\s*\d+\s*\))?", "TEXT"),
+        (r"(?i)\bTIME\b\s*(?:\(\s*\d+\s*\))?", "TEXT"),
         // Semi-structured
         (r"(?i)\bVARIANT\b", "TEXT"),
         (r"(?i)\bOBJECT\b", "TEXT"),

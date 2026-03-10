@@ -41,49 +41,49 @@ unchanged — but this is **untested** end-to-end.
 - [x] `LISTAGG(expr, delim) WITHIN GROUP (ORDER BY ...)` — rewrites to `GROUP_CONCAT(expr, delim)`; `WITHIN GROUP` clause consumed and dropped (SQLite limitation: ORDER BY inside GROUP_CONCAT not supported)
 
 ### GREATEST / LEAST (`src/translator/functions.rs`)
-- [ ] `GREATEST(v1, v2, ...)` — SQLite `MAX()` is aggregate-only; rewrite to `CASE WHEN` chain
-- [ ] `LEAST(v1, v2, ...)` — same; `CASE WHEN` chain
+- [x] `GREATEST(v1, v2, ...)` — SQLite scalar `MAX(v1, v2, ...)` (multi-arg form); integration tests added
+- [x] `LEAST(v1, v2, ...)` — SQLite scalar `MIN(v1, v2, ...)`; integration tests added
 
 ---
 
 ## Priority 2 — MEDIUM IMPACT
 
 ### Date / Time Functions (`src/translator/functions.rs`)
-- [ ] `TO_DATE(str, format)` — two-arg form with format string (only single-arg handled today)
-- [ ] `TO_CHAR(date, format)` — date-to-formatted-string using `strftime` pattern mapping
-- [ ] `TIMESTAMP_FROM_PARTS(y, m, d, hh, mm, ss)` — custom function or `DATETIME(printf(...))`
-- [ ] `DATE_FROM_PARTS(y, m, d)` — `DATE(printf('%04d-%02d-%02d', y, m, d))`
-- [ ] `TIME_FROM_PARTS(h, m, s)` — `TIME(printf(...))`
-- [ ] `LAST_DAY(date)` — SQLite date arithmetic
-- [ ] `NEXT_DAY(date, dayname)` — custom function or CASE expression
-- [ ] `CONVERT_TIMEZONE(tz, ts)` / three-arg form — document as unsupported (SQLite limitation)
-- [ ] `EXTRACT(part FROM expr)` syntax — map to existing `STRFTIME()` rewrites (syntax gap only)
+- [x] `TO_DATE(str, format)` — custom SQLite function; format arg silently ignored; integration test added
+- [x] `TO_CHAR(date, format)` — custom SQLite function; maps common Snowflake tokens to strftime; integration tests added
+- [x] `TIMESTAMP_FROM_PARTS(y, m, d, hh, mm, ss)` — translator rewrite to `DATETIME(PRINTF(...))`; integration test added
+- [x] `DATE_FROM_PARTS(y, m, d)` — translator rewrite to `DATE(PRINTF('%04d-%02d-%02d', ...))`; integration test added
+- [x] `TIME_FROM_PARTS(h, m, s)` — translator rewrite to `TIME(PRINTF(...))`; integration test added
+- [x] `LAST_DAY(date)` — simple rule: `DATE(date, 'start of month', '+1 month', '-1 day')`; integration tests added
+- [x] `NEXT_DAY(date, dayname)` — custom SQLite function using Julian Day arithmetic; integration test added
+- [x] `CONVERT_TIMEZONE(tz, ts)` / three-arg form — custom function; returns timestamp unchanged (SQLite limitation); integration test added
+- [x] `EXTRACT(part FROM expr)` syntax — translator rewrite to `CAST(STRFTIME(...) AS INTEGER)`; integration tests added
 
 ### Semi-Structured Functions (`src/connection.rs`)
-- [ ] `OBJECT_KEYS(obj)` — `JSON_EACH(obj)` (tricky in scalar context; may need table-valued approach)
-- [ ] `ARRAY_SLICE(arr, start, end)` — custom function using `JSON_EACH`
-- [ ] `ARRAY_APPEND(arr, val)` — `JSON_INSERT(arr, '$[#]', val)`
-- [ ] `ARRAY_CONCAT(arr1, arr2)` — custom function
-- [ ] `ARRAY_COMPACT(arr)` — remove NULLs; custom function
-- [ ] `ARRAY_UNIQUE(arr)` — deduplicate; custom function
-- [ ] `TYPEOF(variant)` — return `'array'` / `'object'` / `'string'` / `'integer'` etc.; custom function
-- [ ] `STRIP_NULL_VALUE(obj)` — remove null-valued keys; custom function
+- [x] `OBJECT_KEYS(obj)` — custom function; returns JSON array of top-level keys; integration test added
+- [x] `ARRAY_SLICE(arr, start, end)` — custom function; 0-indexed slice [start, end); integration test added
+- [x] `ARRAY_APPEND(arr, val)` — custom function; appends to JSON array; integration test added
+- [x] `ARRAY_CONCAT(arr1, arr2)` — custom function; concatenates two JSON arrays; integration test added
+- [x] `ARRAY_COMPACT(arr)` — custom function; removes null elements; integration test added
+- [x] `ARRAY_UNIQUE(arr)` — custom function; deduplicates preserving first occurrence; integration test added
+- [x] `TYPEOF(variant)` — translator rewrites to `snowflake_typeof()`; custom function returns Snowflake-style type names; integration tests added
+- [x] `STRIP_NULL_VALUE(obj)` — custom function; removes null-valued keys from JSON object; integration test added
 - [ ] `FLATTEN(input, ...)` — document as unsupported (requires lateral join / table-valued function)
 
 ### DDL Constructs (`src/translator/rewriter.rs` + `src/translator/noop.rs`)
-- [ ] `CREATE TEMPORARY TABLE` — pass through (SQLite supports natively); add test
-- [ ] `CREATE TRANSIENT TABLE` — strip `TRANSIENT`, treat as `CREATE TABLE`; add test
-- [ ] `ALTER TABLE ... ADD COLUMN` — pass through (SQLite supports); add test
-- [ ] `ALTER TABLE ... DROP COLUMN` — pass through (SQLite 3.35+); add test
-- [ ] `ALTER TABLE ... RENAME COLUMN old TO new` — pass through (SQLite 3.25+); add test
-- [ ] `CREATE DATABASE` / `DROP DATABASE` — add to noop list
-- [ ] `ANALYZE` — add to noop list
+- [x] `CREATE TEMPORARY TABLE` — passes through to SQLite natively; integration test added
+- [x] `CREATE TRANSIENT TABLE` — simple rule strips `TRANSIENT`; integration test added
+- [x] `ALTER TABLE ... ADD COLUMN` — passes through; integration test added
+- [x] `ALTER TABLE ... RENAME COLUMN old TO new` — passes through (SQLite 3.25+); integration test added
+- [ ] `ALTER TABLE ... DROP COLUMN` — passes through (SQLite 3.35+); add test
+- [x] `CREATE DATABASE` / `DROP DATABASE` — added to noop list; integration tests added
+- [x] `ANALYZE` — added to noop list; integration test added
 
 ### Operators (`src/translator/functions.rs` or `src/translator/rewriter.rs`)
-- [ ] `::` cast operator (e.g. `val::INTEGER`) — rewrite to `CAST(val AS INTEGER)`
+- [x] `::` cast operator (e.g. `val::INTEGER`) — regex rewrite to `CAST(val AS INTEGER)`; integration tests added
 
 ### Statements (no-op list — `src/translator/noop.rs`)
-- [ ] `MERGE INTO … USING … WHEN MATCHED` — add to no-op list with a clear error message (SQLite fundamental limitation)
+- [x] `MERGE INTO … USING … WHEN MATCHED` — added to no-op list; integration test added
 
 ---
 

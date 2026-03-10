@@ -40,6 +40,13 @@ static NOOP_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
         // SET / UNSET session variables
         r"(?i)^\s*SET\s+\w+\s*=",
         r"(?i)^\s*UNSET\s+\w+",
+        // Database management (SQLite has only one database per connection)
+        r"(?i)^\s*CREATE\s+(OR\s+REPLACE\s+)?DATABASE\b",
+        r"(?i)^\s*DROP\s+DATABASE\b",
+        // ANALYZE — Snowflake statistics command; no meaningful SQLite equivalent
+        r"(?i)^\s*ANALYZE\s*$",
+        // MERGE INTO — SQLite does not support MERGE (fundamental limitation)
+        r"(?i)^\s*MERGE\s+INTO\b",
         // CALL with no meaningful local equivalent (can be overridden)
         // We intentionally do NOT add CALL here — stored procedures may be user-defined.
     ];

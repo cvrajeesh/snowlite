@@ -63,7 +63,19 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 ---
 
-## Step 5 — Push the branch
+## Step 5 — Lint
+
+Run the linter and fix any warnings before pushing:
+
+```bash
+cargo clippy
+```
+
+Fix all warnings reported by clippy, then re-run to confirm a clean result before continuing.
+
+---
+
+## Step 6 — Push the branch
 
 ```bash
 git push -u origin <type>/<short-description>
@@ -71,7 +83,7 @@ git push -u origin <type>/<short-description>
 
 ---
 
-## Step 6 — Open a pull request
+## Step 7 — Open a pull request
 
 Use the detected type as the PR title prefix. Keep the title under 70 characters.
 
@@ -83,6 +95,7 @@ gh pr create \
 - <bullet summarising what changed and why>
 
 ## Test plan
+- [ ] `cargo clippy` — no warnings
 - [ ] `cargo test` passes
 - [ ] <specific behaviour to verify>
 

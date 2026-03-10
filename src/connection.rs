@@ -709,7 +709,7 @@ fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
 /// after they have been mapped to strftime equivalents.
 fn apply_strftime(fmt: &str, val: &str) -> String {
     // Parse the date portion (YYYY-MM-DD)
-    let parts: Vec<&str> = val.trim().splitn(2, 'T').next()
+    let parts: Vec<&str> = val.trim().split('T').next()
         .unwrap_or(val)
         .split(' ')
         .next()
@@ -721,7 +721,7 @@ fn apply_strftime(fmt: &str, val: &str) -> String {
     let day   = parts.get(2).and_then(|d| d.get(..2)).unwrap_or("01");
 
     // Parse the time portion (HH:MM:SS)
-    let time_part = val.trim().splitn(2, ' ').nth(1).unwrap_or("00:00:00");
+    let time_part = val.trim().split_once(' ').map(|x| x.1).unwrap_or("00:00:00");
     let tparts: Vec<&str> = time_part.split(':').collect();
     let hour   = tparts.first().copied().unwrap_or("00");
     let minute = tparts.get(1).copied().unwrap_or("00");

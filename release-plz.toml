@@ -2,3 +2,4 @@
 # Do not publish to crates.io — the library is consumed as a git dependency.
 # GitHub Releases (tags) are the distribution mechanism.
 publish = false
+git_release_enable = true

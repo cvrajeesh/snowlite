@@ -117,6 +117,9 @@ static SIMPLE_RULES: Lazy<Vec<Rule>> = Lazy::new(|| {
         Rule::new(r"(?i)\bSQUARE\s*\(([^)]+)\)", "(($1) * ($1))"),
         Rule::new(r"(?i)\bCBRT\s*\(([^)]+)\)", "POWER($1, 1.0/3.0)"),
         Rule::new(r"(?i)\bLN\s*\(([^)]+)\)", "LOG($1)"),
+        // GREATEST / LEAST — SQLite multi-arg MAX/MIN are scalar when called with 2+ args
+        Rule::new(r"(?i)\bGREATEST\s*\(", "MAX("),
+        Rule::new(r"(?i)\bLEAST\s*\(", "MIN("),
         // Semi-structured — ARRAY_SIZE
         Rule::new(r"(?i)\bARRAY_SIZE\s*\(([^)]+)\)", "JSON_ARRAY_LENGTH($1)"),
         Rule::new(r"(?i)\bARRAY_LENGTH\s*\(([^)]+)\)", "JSON_ARRAY_LENGTH($1)"),
@@ -767,6 +770,22 @@ mod tests {
             "SELECT LISTAGG(val) WITHIN GROUP (ORDER BY val) FROM t",
         );
         assert_eq!(result, "SELECT GROUP_CONCAT(val) FROM t");
+    }
+
+    #[test]
+    fn greatest_translates_to_max() {
+        assert_eq!(
+            apply_simple_rules("SELECT GREATEST(a, b, c) FROM t"),
+            "SELECT MAX(a, b, c) FROM t"
+        );
+    }
+
+    #[test]
+    fn least_translates_to_min() {
+        assert_eq!(
+            apply_simple_rules("SELECT LEAST(a, b) FROM t"),
+            "SELECT MIN(a, b) FROM t"
+        );
     }
 
     #[test]

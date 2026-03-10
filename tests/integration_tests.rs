@@ -2560,3 +2560,65 @@ fn merge_statement() {
     let rows = c.query("SELECT COUNT(*) FROM target", &[]).unwrap();
     assert_eq!(rows[0].get::<i64>(0).unwrap(), 3);
 }
+
+#[test]
+fn greatest_two_args() {
+    let c = conn();
+    let rows = c.query("SELECT GREATEST(3, 5)", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 5);
+}
+
+#[test]
+fn greatest_three_args() {
+    let c = conn();
+    let rows = c.query("SELECT GREATEST(1, 5, 3)", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 5);
+}
+
+#[test]
+fn greatest_with_column() {
+    let c = conn();
+    c.execute("CREATE TABLE t (a INTEGER, b INTEGER)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES (10, 20), (30, 5)", &[]).unwrap();
+    let rows = c.query("SELECT GREATEST(a, b) FROM t ORDER BY a", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 20);
+    assert_eq!(rows[1].get::<i64>(0).unwrap(), 30);
+}
+
+#[test]
+fn greatest_returns_null_on_null_arg() {
+    let c = conn();
+    let rows = c.query("SELECT GREATEST(1, NULL, 3)", &[]).unwrap();
+    assert!(rows[0].get::<Option<i64>>(0).unwrap().is_none());
+}
+
+#[test]
+fn least_two_args() {
+    let c = conn();
+    let rows = c.query("SELECT LEAST(3, 5)", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 3);
+}
+
+#[test]
+fn least_three_args() {
+    let c = conn();
+    let rows = c.query("SELECT LEAST(7, 2, 9)", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 2);
+}
+
+#[test]
+fn least_with_column() {
+    let c = conn();
+    c.execute("CREATE TABLE t (a INTEGER, b INTEGER)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES (10, 20), (30, 5)", &[]).unwrap();
+    let rows = c.query("SELECT LEAST(a, b) FROM t ORDER BY a", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 10);
+    assert_eq!(rows[1].get::<i64>(0).unwrap(), 5);
+}
+
+#[test]
+fn least_returns_null_on_null_arg() {
+    let c = conn();
+    let rows = c.query("SELECT LEAST(1, NULL, 3)", &[]).unwrap();
+    assert!(rows[0].get::<Option<i64>>(0).unwrap().is_none());
+}

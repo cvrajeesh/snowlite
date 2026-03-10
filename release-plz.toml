@@ -3,3 +3,4 @@
 # GitHub Releases (tags) are the distribution mechanism.
 publish = false
 git_release_enable = true
+semver_check = false

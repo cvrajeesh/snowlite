@@ -2,6 +2,7 @@
 name = "snowlite"
 version = "0.2.0"
 edition = "2021"
+publish = false
 description = "Local SQLite-backed driver that acts as an in-place replacement for Snowflake in integration tests"
 license = "MIT"
 repository = "https://github.com/cvrajeesh/snowlite"

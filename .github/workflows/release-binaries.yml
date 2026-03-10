@@ -1,16 +1,41 @@
 name: Release Binaries
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
+  # Resolve the release tag from the commit that triggered the Release workflow.
+  # release-plz uses GITHUB_TOKEN to create releases, which suppresses the
+  # `release: published` event. Using `workflow_run` sidesteps this limitation.
+  resolve-tag:
+    name: Resolve release tag
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Find tag at release commit
+        id: tag
+        run: |
+          TAG=$(git tag --points-at ${{ github.event.workflow_run.head_sha }} \
+            | grep '^v' | head -1)
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
   build-linux:
     name: Linux ${{ matrix.arch }}
     runs-on: ubuntu-latest
+    needs: resolve-tag
+    if: ${{ needs.resolve-tag.outputs.tag != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -25,6 +50,8 @@ jobs:
             cross_pkg: gcc-aarch64-linux-gnu
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -47,13 +74,18 @@ jobs:
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve-tag.outputs.tag }}
           files: ${{ matrix.artifact }}
 
   build-macos-universal:
     name: macOS Universal
     runs-on: macos-latest
+    needs: resolve-tag
+    if: ${{ needs.resolve-tag.outputs.tag != '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -75,13 +107,18 @@ jobs:
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve-tag.outputs.tag }}
           files: snowlite-server-macos-universal
 
   build-windows:
     name: Windows x86_64
     runs-on: windows-latest
+    needs: resolve-tag
+    if: ${{ needs.resolve-tag.outputs.tag != '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -95,4 +132,5 @@ jobs:
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve-tag.outputs.tag }}
           files: snowlite-server-windows-x86_64.exe

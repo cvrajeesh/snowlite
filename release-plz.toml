@@ -8,10 +8,3 @@ git_only = true
 publish = false
 git_release_enable = true
 semver_check = false
-
-[[package]]
-name = "snowlite"
-# Use package-scoped tags to avoid collision with the old `v0.2.0` tag
-# that was created when the package was still named `local-db`.
-# The baseline tag is `snowlite-v0.2.0` at commit 835718a (the rename commit).
-git_tag_name = "snowlite-v{{version}}"

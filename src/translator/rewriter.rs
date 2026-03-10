@@ -46,10 +46,25 @@ impl Translator {
     /// Returns `Ok(None)` if the statement is a known no-op.
     /// Returns `Ok(Some(sqlite_sql))` on success.
     pub fn translate(&self, sql: &str) -> Result<Option<String>> {
+        use crate::Error;
+        use once_cell::sync::Lazy;
+        use regex::Regex;
+
+        static FLATTEN_RE: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r"(?i)\bFLATTEN\s*\(").expect("valid FLATTEN regex")
+        });
+
         let trimmed = sql.trim();
         if noop::is_noop(trimmed) {
             log::debug!("Dropping no-op statement: {}", &trimmed[..trimmed.len().min(80)]);
             return Ok(None);
+        }
+
+        if FLATTEN_RE.is_match(trimmed) {
+            return Err(Error::translation(
+                "FLATTEN() is not supported: SQLite has no lateral/table-valued function joins. \
+                 Rewrite using JSON_EACH() or pre-explode the data before querying.",
+            ));
         }
 
         let mut out = trimmed.to_owned();

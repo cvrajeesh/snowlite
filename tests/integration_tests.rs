@@ -3188,3 +3188,28 @@ fn recursive_cte_depth() {
     let count: i64 = rows[0].get(0).unwrap();
     assert_eq!(count, 10);
 }
+
+// ── Unsupported constructs ────────────────────────────────────────────────────
+
+#[test]
+fn flatten_returns_descriptive_error() {
+    // FLATTEN() requires a lateral/table-valued function join which SQLite does
+    // not support. The translator must return a Translation error with a
+    // clear message rather than letting a cryptic SQLite parse error through.
+    let c = conn();
+    let err = c
+        .execute(
+            "SELECT value FROM TABLE(FLATTEN(input => '[1,2,3]'::ARRAY))",
+            &[],
+        )
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("FLATTEN"),
+        "error message should mention FLATTEN, got: {msg}"
+    );
+    assert!(
+        msg.contains("not supported"),
+        "error message should say 'not supported', got: {msg}"
+    );
+}

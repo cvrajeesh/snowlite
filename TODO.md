@@ -68,7 +68,7 @@ unchanged — but this is **untested** end-to-end.
 - [x] `ARRAY_UNIQUE(arr)` — custom function; deduplicates preserving first occurrence; integration test added
 - [x] `TYPEOF(variant)` — translator rewrites to `snowflake_typeof()`; custom function returns Snowflake-style type names; integration tests added
 - [x] `STRIP_NULL_VALUE(obj)` — custom function; removes null-valued keys from JSON object; integration test added
-- [ ] `FLATTEN(input, ...)` — document as unsupported (requires lateral join / table-valued function)
+- [x] `FLATTEN(input, ...)` — returns a descriptive `Translation` error; integration test added
 
 ### DDL Constructs (`src/translator/rewriter.rs` + `src/translator/noop.rs`)
 - [x] `CREATE TEMPORARY TABLE` — passes through to SQLite natively; integration test added

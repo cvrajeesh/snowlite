@@ -192,7 +192,32 @@ let conn = Connection::open_in_memory_with_config(
 
 `local-db` ships an optional HTTP server that implements the **Snowflake wire protocol**. Any Snowflake connector — Python, Node.js, Go, Java, etc. — can point at it instead of a real Snowflake account.
 
-### Enable and run
+### Download pre-built binary (no Rust required)
+
+Pre-built binaries are attached to every [GitHub Release](https://github.com/cvrajeesh/local-db/releases/latest):
+
+| Platform | File |
+|---|---|
+| macOS (Intel + Apple Silicon) | `local-db-server-macos-universal` |
+| Linux x86_64 | `local-db-server-linux-x86_64` |
+| Linux aarch64 | `local-db-server-linux-aarch64` |
+| Windows x86_64 | `local-db-server-windows-x86_64.exe` |
+
+**macOS / Linux — one-liner install:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cvrajeesh/local-db/main/install.sh | sh
+./local-db-server
+```
+
+**Windows — PowerShell:**
+
+```powershell
+irm https://raw.githubusercontent.com/cvrajeesh/local-db/main/install.ps1 | iex
+.\local-db-server.exe
+```
+
+### Build from source (requires Rust)
 
 ```bash
 # Build and start (default port 8765)

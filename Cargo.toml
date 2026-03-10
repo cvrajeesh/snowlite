@@ -18,7 +18,7 @@ path = "src/bin/server.rs"
 required-features = ["server"]
 
 [features]
-server = ["axum", "tokio", "uuid"]
+server = ["axum", "tokio", "uuid", "tower-http"]
 
 [dependencies]
 rusqlite = { version = "0.31", features = ["bundled", "functions"] }
@@ -34,6 +34,7 @@ log = "0.4"
 axum = { version = "0.7", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"], optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
+tower-http = { version = "0.5", features = ["decompression-gzip"], optional = true }
 
 [dev-dependencies]
 pretty_assertions = "1.4"

@@ -25,6 +25,7 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value as JsonValue};
+use tower_http::decompression::RequestDecompressionLayer;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -115,7 +116,20 @@ fn spawn_connection_thread(rx: mpsc::Receiver<ConnCmd>) {
                         bindings.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
                     let result = match conn.execute(&sql, &params) {
                         Ok(n) => ConnResult::Execute { affected_rows: n },
-                        Err(e) => ConnResult::Error(e.to_string()),
+                        Err(e) => {
+                            // COMMIT/ROLLBACK fail when no transaction is active (SQLite
+                            // autocommit mode).  Treat this as a silent no-op so that
+                            // `conn.commit()` / `conn.rollback()` never raise on the client.
+                            let msg = e.to_string().to_lowercase();
+                            let sql_up = sql.trim().to_uppercase();
+                            if (sql_up.starts_with("COMMIT") || sql_up.starts_with("ROLLBACK"))
+                                && (msg.contains("no transaction") || msg.contains("cannot commit") || msg.contains("cannot rollback"))
+                            {
+                                ConnResult::Execute { affected_rows: 0 }
+                            } else {
+                                ConnResult::Error(e.to_string())
+                            }
+                        }
                     };
                     let _ = reply.send(result);
                 }
@@ -278,6 +292,67 @@ mod hex {
     }
 }
 
+/// Normalize C-style backslash escapes in SQL string literals to forms SQLite understands.
+///
+/// The Snowflake Python connector's pyformat paramstyle uses C-style escapes when
+/// interpolating bound values into SQL strings:
+///   - `\'` → `''`  (SQL standard quote doubling)
+///   - `\n` → actual newline
+///   - `\r` → actual carriage return
+///   - `\t` → actual tab
+///   - `\\` → `\`
+///
+/// This function processes only content inside single-quoted string literals, leaving
+/// the rest of the SQL untouched.
+fn normalize_sql_string_escapes(sql: &str) -> String {
+    let mut result = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    let mut in_string = false;
+
+    while let Some(c) = chars.next() {
+        if in_string {
+            if c == '\\' {
+                match chars.peek() {
+                    Some(&'\'') => {
+                        chars.next();
+                        result.push_str("''");
+                    }
+                    Some(&'n') => {
+                        chars.next();
+                        result.push('\n');
+                    }
+                    Some(&'r') => {
+                        chars.next();
+                        result.push('\r');
+                    }
+                    Some(&'t') => {
+                        chars.next();
+                        result.push('\t');
+                    }
+                    Some(&'\\') => {
+                        chars.next();
+                        result.push('\\');
+                    }
+                    _ => {
+                        result.push(c);
+                    }
+                }
+            } else if c == '\'' {
+                result.push(c);
+                in_string = false;
+            } else {
+                result.push(c);
+            }
+        } else {
+            if c == '\'' {
+                in_string = true;
+            }
+            result.push(c);
+        }
+    }
+    result
+}
+
 fn is_query(sql: &str) -> bool {
     let trimmed = sql.trim_start().to_uppercase();
     trimmed.starts_with("SELECT")
@@ -422,6 +497,7 @@ async fn query_request(
         );
     }
 
+    let sql = normalize_sql_string_escapes(&sql);
     let bindings = parse_bindings(&body.get("bindings").cloned());
     let query_id = new_query_id();
 
@@ -533,12 +609,11 @@ async fn query_request(
                     "data": {
                         "rowtype": [],
                         "rowset": [],
-                        "total": 0,
+                        "total": affected_rows,
                         "returned": 0,
                         "queryId": query_id,
                         "queryResultFormat": "json",
-                        "parameters": [],
-                        "numberOfRows": affected_rows
+                        "parameters": []
                     }
                 })),
             )
@@ -616,6 +691,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/session", post(session_action))
         .route("/queries/v1/query-request", post(query_request))
         .route("/telemetry/send", post(telemetry_send))
+        .layer(RequestDecompressionLayer::new())
         .with_state(state)
 }
 

@@ -89,7 +89,20 @@ mod app {
                             bindings.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
                         let r = match conn.execute(&sql, &p) {
                             Ok(n)  => ConnResult::Execute { affected_rows: n },
-                            Err(e) => ConnResult::Error(e.to_string()),
+                            Err(e) => {
+                                // COMMIT/ROLLBACK fail when no transaction is active; treat as no-op.
+                                let msg = e.to_string().to_lowercase();
+                                let sql_up = sql.trim().to_uppercase();
+                                if (sql_up.starts_with("COMMIT") || sql_up.starts_with("ROLLBACK"))
+                                    && (msg.contains("no transaction")
+                                        || msg.contains("cannot commit")
+                                        || msg.contains("cannot rollback"))
+                                {
+                                    ConnResult::Execute { affected_rows: 0 }
+                                } else {
+                                    ConnResult::Error(e.to_string())
+                                }
+                            }
                         };
                         let _ = reply.send(r);
                     }
@@ -207,6 +220,41 @@ mod app {
         token.strip_prefix("local-db-token-").map(|s| s.to_string())
     }
 
+    // ── SQL preprocessing ────────────────────────────────────────────────────
+
+    /// Normalise C-style backslash escapes inside single-quoted SQL string literals.
+    ///
+    /// The Snowflake connector's pyformat paramstyle emits `\'` for a literal
+    /// apostrophe and `\n`/`\r`/`\t` for whitespace control characters.
+    /// SQLite requires `''` (SQL-standard doubling) for apostrophes and does not
+    /// interpret `\n` as a newline in string literals.
+    pub(super) fn normalize_sql_string_escapes(sql: &str) -> String {
+        let mut result = String::with_capacity(sql.len());
+        let mut chars = sql.chars().peekable();
+        let mut in_string = false;
+        while let Some(c) = chars.next() {
+            if in_string {
+                if c == '\\' {
+                    match chars.peek() {
+                        Some(&'\'') => { chars.next(); result.push_str("''"); }
+                        Some(&'n')  => { chars.next(); result.push('\n'); }
+                        Some(&'r')  => { chars.next(); result.push('\r'); }
+                        Some(&'t')  => { chars.next(); result.push('\t'); }
+                        Some(&'\\') => { chars.next(); result.push('\\'); }
+                        _           => { result.push(c); }
+                    }
+                } else {
+                    if c == '\'' { in_string = false; }
+                    result.push(c);
+                }
+            } else {
+                if c == '\'' { in_string = true; }
+                result.push(c);
+            }
+        }
+        result
+    }
+
     // ── Handlers ─────────────────────────────────────────────────────────────
 
     async fn health() -> Json<JsonValue> {
@@ -287,6 +335,7 @@ mod app {
             })));
         }
 
+        let sql = normalize_sql_string_escapes(&sql);
         let bindings = parse_bindings(&body.get("bindings").cloned());
         let query_id = new_query_id();
         let (tx, rx) = mpsc::channel();
@@ -310,9 +359,10 @@ mod app {
             Ok(ConnResult::Execute { affected_rows }) => (StatusCode::OK, Json(json!({
                 "success": true, "code": null, "message": null,
                 "data": {
-                    "rowtype": [], "rowset": [], "total": 0, "returned": 0,
+                    "rowtype": [], "rowset": [],
+                    "total": affected_rows, "returned": 0,
                     "queryId": query_id, "queryResultFormat": "json",
-                    "parameters": [], "numberOfRows": affected_rows
+                    "parameters": []
                 }
             }))),
             Ok(ConnResult::Query { columns, rows }) => {
@@ -511,7 +561,7 @@ async fn test_insert_returns_affected_rows() {
     let (app, _) = query(app, &token, "CREATE TABLE t (id NUMBER, name VARCHAR)").await;
     let (_, body) = query(app, &token, "INSERT INTO t VALUES (1, 'Alice')").await;
     assert_eq!(body["success"], true, "{body}");
-    assert_eq!(body["data"]["numberOfRows"], 1);
+    assert_eq!(body["data"]["total"], 1);
 }
 
 #[tokio::test]
@@ -592,7 +642,7 @@ async fn test_parameterized_insert_with_bindings() {
         Some(bindings),
     ).await;
     assert_eq!(body["success"], true, "{body}");
-    assert_eq!(body["data"]["numberOfRows"], 1);
+    assert_eq!(body["data"]["total"], 1);
 
     let (_, body) = query(app, &token, "SELECT id, name FROM t").await;
     assert_eq!(body["data"]["rowset"], json!([["42", "Charlie"]]));
@@ -680,11 +730,11 @@ async fn test_ddl_then_dml_then_select_full_cycle() {
 
     let (app, b) = query(app, &token,
         "INSERT INTO orders VALUES (1, 'widget', 10)").await;
-    assert_eq!(b["data"]["numberOfRows"], 1, "{b}");
+    assert_eq!(b["data"]["total"], 1, "{b}");
 
     let (app, b) = query(app, &token,
         "INSERT INTO orders VALUES (2, 'gadget', 5)").await;
-    assert_eq!(b["data"]["numberOfRows"], 1, "{b}");
+    assert_eq!(b["data"]["total"], 1, "{b}");
 
     let (app, b) = query(app, &token,
         "UPDATE orders SET qty = 20 WHERE id = 1").await;
@@ -721,4 +771,533 @@ async fn test_query_result_format_is_json() {
     let (_, body) = query(app, &token, "SELECT 1 AS n").await;
     assert_eq!(body["data"]["queryResultFormat"], "json");
     assert!(body["data"]["queryId"].as_str().is_some());
+}
+
+// ── Connection lifecycle (converted from test_connection.py) ──────────────────
+
+#[tokio::test]
+async fn test_select_integer_constant() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT 42 AS answer").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["rowset"], json!([["42"]]));
+    assert_eq!(body["data"]["rowtype"][0]["name"], "ANSWER");
+}
+
+#[tokio::test]
+async fn test_select_string_constant() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT 'hello' AS greeting").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["rowset"], json!([["hello"]]));
+}
+
+#[tokio::test]
+async fn test_multiple_sequential_logins() {
+    // Re-connecting (login/logout cycle) must always succeed.
+    for _ in 0..3 {
+        let (_, token) = login(new_app()).await;
+        assert!(token.starts_with("local-db-token-"));
+    }
+}
+
+#[tokio::test]
+async fn test_two_queries_share_same_session_db() {
+    // A second query on the same session token can see data from the first.
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE mc_test (n NUMBER)").await;
+    let (app, _) = query(app, &token, "INSERT INTO mc_test VALUES (1)").await;
+    let (_, body) = query(app, &token, "SELECT n FROM mc_test").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["rowset"], json!([["1"]]));
+}
+
+// ── DML rowcount (converted from test_cursor.py) ──────────────────────────────
+
+#[tokio::test]
+async fn test_rowcount_after_single_insert() {
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE rc_ins (n NUMBER)").await;
+    let (_, body) = query(app, &token, "INSERT INTO rc_ins VALUES (1)").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["total"], 1);
+}
+
+#[tokio::test]
+async fn test_rowcount_after_bulk_insert() {
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE rc_bulk (n NUMBER)").await;
+    let (_, body) = query(app, &token, "INSERT INTO rc_bulk VALUES (1), (2), (3)").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["total"], 3);
+}
+
+#[tokio::test]
+async fn test_rowcount_after_update() {
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE rc_upd (n NUMBER)").await;
+    let (app, _) = query(app, &token, "INSERT INTO rc_upd VALUES (1)").await;
+    let (app, _) = query(app, &token, "INSERT INTO rc_upd VALUES (2)").await;
+    let (_, body) = query(app, &token, "UPDATE rc_upd SET n = 99 WHERE n = 1").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["total"], 1);
+}
+
+#[tokio::test]
+async fn test_rowcount_after_delete() {
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE rc_del (n NUMBER)").await;
+    let (app, _) = query(app, &token, "INSERT INTO rc_del VALUES (1)").await;
+    let (app, _) = query(app, &token, "INSERT INTO rc_del VALUES (2)").await;
+    let (_, body) = query(app, &token, "DELETE FROM rc_del").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["total"], 2);
+}
+
+#[tokio::test]
+async fn test_dml_response_has_empty_rowtype() {
+    // DML must not return column metadata (description is falsy after DML).
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE dml_desc (n NUMBER)").await;
+    let (_, body) = query(app, &token, "INSERT INTO dml_desc VALUES (1)").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["rowtype"], json!([]));
+}
+
+// ── Noop statements (converted from test_noop_statements.py) ─────────────────
+
+#[tokio::test]
+async fn test_noop_use_database() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "USE DATABASE mydb").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["rowset"], json!([]));
+}
+
+#[tokio::test]
+async fn test_noop_use_schema() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "USE SCHEMA public").await;
+    assert_eq!(body["success"], true);
+}
+
+#[tokio::test]
+async fn test_noop_use_warehouse() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "USE WAREHOUSE compute_wh").await;
+    assert_eq!(body["success"], true);
+}
+
+#[tokio::test]
+async fn test_noop_alter_session_set() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "ALTER SESSION SET QUERY_TAG = 'test'").await;
+    assert_eq!(body["success"], true);
+}
+
+#[tokio::test]
+async fn test_noop_alter_session_unset() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "ALTER SESSION UNSET QUERY_TAG").await;
+    assert_eq!(body["success"], true);
+}
+
+#[tokio::test]
+async fn test_noop_show_tables_empty_rowset() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SHOW TABLES").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["rowset"], json!([]));
+}
+
+#[tokio::test]
+async fn test_noop_show_databases_empty_rowset() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SHOW DATABASES").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["rowset"], json!([]));
+}
+
+#[tokio::test]
+async fn test_noop_grant() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "GRANT SELECT ON TABLE foo TO ROLE analyst").await;
+    assert_eq!(body["success"], true);
+}
+
+#[tokio::test]
+async fn test_noop_create_warehouse() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "CREATE OR REPLACE WAREHOUSE test_wh").await;
+    assert_eq!(body["success"], true);
+}
+
+#[tokio::test]
+async fn test_noop_does_not_corrupt_next_query() {
+    // A noop immediately before a SELECT must not break the result.
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "SHOW TABLES").await;
+    let (_, body) = query(app, &token, "SELECT 123 AS v").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["rowset"], json!([["123"]]));
+}
+
+#[tokio::test]
+async fn test_noop_followed_by_dml() {
+    // Noops before real DDL/DML leave the connection fully functional.
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "USE DATABASE mydb").await;
+    let (app, _) = query(app, &token, "ALTER SESSION SET QUERY_TAG = 'noop_test'").await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE noop_dml (n NUMBER)").await;
+    let (app, _) = query(app, &token, "INSERT INTO noop_dml VALUES (1)").await;
+    let (_, body) = query(app, &token, "SELECT n FROM noop_dml").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["rowset"], json!([["1"]]));
+}
+
+// ── Transaction control (converted from test_transactions.py) ─────────────────
+
+#[tokio::test]
+async fn test_begin_commit_makes_data_visible() {
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE txn_commit (n NUMBER)").await;
+    let (app, _) = query(app, &token, "BEGIN").await;
+    let (app, _) = query(app, &token, "INSERT INTO txn_commit VALUES (7)").await;
+    let (app, _) = query(app, &token, "COMMIT").await;
+    let (_, body) = query(app, &token, "SELECT n FROM txn_commit").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["rowset"], json!([["7"]]));
+}
+
+#[tokio::test]
+async fn test_begin_rollback_discards_insert() {
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE txn_roll (n NUMBER)").await;
+    let (app, _) = query(app, &token, "BEGIN").await;
+    let (app, _) = query(app, &token, "INSERT INTO txn_roll VALUES (99)").await;
+    let (app, _) = query(app, &token, "ROLLBACK").await;
+    let (_, body) = query(app, &token, "SELECT COUNT(*) AS c FROM txn_roll").await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["data"]["rowset"], json!([["0"]]));
+}
+
+#[tokio::test]
+async fn test_commit_without_active_transaction_is_safe() {
+    // COMMIT when no transaction is open must not error.
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "COMMIT").await;
+    assert_eq!(body["success"], true);
+}
+
+#[tokio::test]
+async fn test_rollback_without_active_transaction_is_safe() {
+    // ROLLBACK when no transaction is open must not error.
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "ROLLBACK").await;
+    assert_eq!(body["success"], true);
+}
+
+// ── String escape normalisation (converted from test_types.py) ────────────────
+
+#[tokio::test]
+async fn test_backslash_quote_normalised_to_sql_doubling() {
+    // The Snowflake connector pyformat emits \' inside string literals.
+    // The server must normalise \' → '' before sending to SQLite.
+    let (app, token) = login(new_app()).await;
+    let sql = r#"SELECT 'it\'s a test'"#;
+    let (_, body) = query(app, &token, sql).await;
+    assert_eq!(body["success"], true, "backslash-quote should be normalised: {body}");
+    let val = body["data"]["rowset"][0][0].as_str().unwrap_or("");
+    assert!(val.contains("it") && val.contains("s a test"), "got: {val}");
+}
+
+#[tokio::test]
+async fn test_backslash_n_normalised_to_actual_newline() {
+    // The connector emits \n (two chars) inside string literals; server rewrites to real newline.
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE nl_t (v VARCHAR)").await;
+    let sql = r"INSERT INTO nl_t VALUES ('line1\nline2')";
+    let (app, body) = query(app, &token, sql).await;
+    assert_eq!(body["success"], true, "{body}");
+    let (_, body) = query(app, &token, "SELECT v FROM nl_t").await;
+    let val = body["data"]["rowset"][0][0].as_str().unwrap_or("");
+    assert!(val.contains('\n'), "expected actual newline in result, got: {val:?}");
+}
+
+// ── Type round-trips (converted from test_types.py) ───────────────────────────
+
+#[tokio::test]
+async fn test_float_binding_roundtrip() {
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE float_t (v NUMBER(10,4))").await;
+    let bindings = json!({"1": {"type": "REAL", "value": "3.14"}});
+    let (app, body) = query_with_bindings(
+        app, &token, "INSERT INTO float_t VALUES (?)", Some(bindings),
+    ).await;
+    assert_eq!(body["success"], true, "{body}");
+    let (_, body) = query(app, &token, "SELECT v FROM float_t").await;
+    let val: f64 = body["data"]["rowset"][0][0].as_str().unwrap().parse().unwrap();
+    assert!((val - 3.14).abs() < 0.001, "expected ~3.14 got {val}");
+}
+
+#[tokio::test]
+async fn test_null_binding_roundtrip() {
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE null_t (v VARCHAR)").await;
+    let bindings = json!({"1": {"type": "TEXT", "value": null}});
+    let (app, body) = query_with_bindings(
+        app, &token, "INSERT INTO null_t VALUES (?)", Some(bindings),
+    ).await;
+    assert_eq!(body["success"], true, "{body}");
+    let (_, body) = query(app, &token, "SELECT v FROM null_t").await;
+    assert_eq!(body["data"]["rowset"][0][0], Value::Null);
+}
+
+#[tokio::test]
+async fn test_boolean_column_stored_as_integer() {
+    // BOOLEAN DDL is rewritten to INTEGER; stored value is "1"/"0".
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE bool_t (v BOOLEAN)").await;
+    let (app, _) = query(app, &token, "INSERT INTO bool_t VALUES (TRUE)").await;
+    let (_, body) = query(app, &token, "SELECT v FROM bool_t").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"][0][0].as_str().unwrap(), "1");
+}
+
+#[tokio::test]
+async fn test_unicode_string_roundtrip() {
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE uni_t (v VARCHAR)").await;
+    let (app, _) = query(app, &token, "INSERT INTO uni_t VALUES ('café 中文 😀')").await;
+    let (_, body) = query(app, &token, "SELECT v FROM uni_t").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"][0][0].as_str().unwrap(), "café 中文 😀");
+}
+
+// ── Snowflake function translations via HTTP (converted from test_snowflake_functions.py) ─
+
+#[tokio::test]
+async fn test_zeroifnull_null_returns_zero() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT ZEROIFNULL(NULL)").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"][0][0].as_str().unwrap(), "0");
+}
+
+#[tokio::test]
+async fn test_zeroifnull_value_unchanged() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT ZEROIFNULL(5)").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"][0][0].as_str().unwrap(), "5");
+}
+
+#[tokio::test]
+async fn test_nullifzero_zero_returns_null() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT NULLIFZERO(0)").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"][0][0], Value::Null);
+}
+
+#[tokio::test]
+async fn test_nullifzero_nonzero_unchanged() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT NULLIFZERO(5)").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"][0][0].as_str().unwrap(), "5");
+}
+
+#[tokio::test]
+async fn test_nvl2_not_null_branch() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT NVL2('x', 'not-null', 'null')").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"], json!([["not-null"]]));
+}
+
+#[tokio::test]
+async fn test_nvl2_null_branch() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT NVL2(NULL, 'not-null', 'null-branch')").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"], json!([["null-branch"]]));
+}
+
+#[tokio::test]
+async fn test_iff_false_branch() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT IFF(0 > 1, 'yes', 'no')").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"], json!([["no"]]));
+}
+
+#[tokio::test]
+async fn test_decode_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(
+        app, &token,
+        "SELECT DECODE('I', 'A', 'Active', 'I', 'Inactive', 'Unknown')",
+    ).await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"], json!([["Inactive"]]));
+}
+
+#[tokio::test]
+async fn test_contains_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT CONTAINS('hello world', 'world')").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"][0][0].as_str().unwrap(), "1");
+}
+
+#[tokio::test]
+async fn test_startswith_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT STARTSWITH('hello world', 'hello')").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"][0][0].as_str().unwrap(), "1");
+}
+
+#[tokio::test]
+async fn test_endswith_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT ENDSWITH('hello world', 'world')").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"][0][0].as_str().unwrap(), "1");
+}
+
+#[tokio::test]
+async fn test_ilike_case_insensitive_filter() {
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE ilike_t (name VARCHAR)").await;
+    let (app, _) = query(app, &token, "INSERT INTO ilike_t VALUES ('Hello World')").await;
+    let (app, _) = query(app, &token, "INSERT INTO ilike_t VALUES ('goodbye')").await;
+    let (_, body) = query(app, &token, "SELECT name FROM ilike_t WHERE name ILIKE '%hello%'").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["total"], 1);
+    assert_eq!(body["data"]["rowset"], json!([["Hello World"]]));
+}
+
+#[tokio::test]
+async fn test_split_part_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT SPLIT_PART('a@b@c', '@', 2)").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"], json!([["b"]]));
+}
+
+#[tokio::test]
+async fn test_dateadd_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT DATEADD(day, 1, '2024-01-15')").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"], json!([["2024-01-16"]]));
+}
+
+#[tokio::test]
+async fn test_datediff_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT DATEDIFF(day, '2024-01-01', '2024-01-15')").await;
+    assert_eq!(body["success"], true, "{body}");
+    let val: f64 = body["data"]["rowset"][0][0].as_str().unwrap().parse().unwrap();
+    assert!((val - 14.0).abs() < 0.01, "expected 14 got {val}");
+}
+
+#[tokio::test]
+async fn test_date_trunc_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT DATE_TRUNC('month', '2024-03-15')").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"], json!([["2024-03-01"]]));
+}
+
+#[tokio::test]
+async fn test_year_month_day_extraction() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(
+        app, &token,
+        "SELECT YEAR('2024-06-15'), MONTH('2024-06-15'), DAY('2024-06-15')",
+    ).await;
+    assert_eq!(body["success"], true, "{body}");
+    let row = &body["data"]["rowset"][0];
+    assert_eq!(row[0].as_str().unwrap().parse::<i64>().unwrap(), 2024);
+    assert_eq!(row[1].as_str().unwrap().parse::<i64>().unwrap(), 6);
+    assert_eq!(row[2].as_str().unwrap().parse::<i64>().unwrap(), 15);
+}
+
+#[tokio::test]
+async fn test_to_varchar_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT TO_VARCHAR(42)").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"], json!([["42"]]));
+}
+
+#[tokio::test]
+async fn test_to_number_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT TO_NUMBER('3.14')").await;
+    assert_eq!(body["success"], true, "{body}");
+    let val: f64 = body["data"]["rowset"][0][0].as_str().unwrap().parse().unwrap();
+    assert!((val - 3.14).abs() < 0.001, "expected 3.14 got {val}");
+}
+
+#[tokio::test]
+async fn test_to_date_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT TO_DATE('2024-01-15')").await;
+    assert_eq!(body["success"], true, "{body}");
+    assert_eq!(body["data"]["rowset"], json!([["2024-01-15"]]));
+}
+
+#[tokio::test]
+async fn test_booland_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT BOOLAND(1, 1), BOOLAND(1, 0)").await;
+    assert_eq!(body["success"], true, "{body}");
+    let row = &body["data"]["rowset"][0];
+    assert_eq!(row[0].as_str().unwrap().parse::<i64>().unwrap(), 1);
+    assert_eq!(row[1].as_str().unwrap().parse::<i64>().unwrap(), 0);
+}
+
+#[tokio::test]
+async fn test_boolor_function() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT BOOLOR(0, 1), BOOLOR(0, 0)").await;
+    assert_eq!(body["success"], true, "{body}");
+    let row = &body["data"]["rowset"][0];
+    assert_eq!(row[0].as_str().unwrap().parse::<i64>().unwrap(), 1);
+    assert_eq!(row[1].as_str().unwrap().parse::<i64>().unwrap(), 0);
+}
+
+#[tokio::test]
+async fn test_colon_path_extraction() {
+    let (app, token) = login(new_app()).await;
+    let (app, _) = query(app, &token, "CREATE OR REPLACE TABLE semi (data VARIANT)").await;
+    let (app, _) = query(app, &token, r#"INSERT INTO semi VALUES ('{"name":"Alice"}')"#).await;
+    let (_, body) = query(app, &token, "SELECT data:name FROM semi").await;
+    assert_eq!(body["success"], true, "{body}");
+    let val = body["data"]["rowset"][0][0].as_str().unwrap_or("");
+    assert!(val.contains("Alice"), "expected 'Alice' in {val}");
+}
+
+#[tokio::test]
+async fn test_object_construct_empty() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT OBJECT_CONSTRUCT()").await;
+    assert_eq!(body["success"], true, "{body}");
+    let raw = body["data"]["rowset"][0][0].as_str().unwrap_or("{}");
+    let parsed: Value = serde_json::from_str(raw).expect("valid JSON from OBJECT_CONSTRUCT");
+    assert_eq!(parsed, json!({}));
+}
+
+#[tokio::test]
+async fn test_array_construct() {
+    let (app, token) = login(new_app()).await;
+    let (_, body) = query(app, &token, "SELECT ARRAY_CONSTRUCT(1, 2, 3)").await;
+    assert_eq!(body["success"], true, "{body}");
+    let raw = body["data"]["rowset"][0][0].as_str().unwrap_or("[]");
+    let parsed: Value = serde_json::from_str(raw).expect("valid JSON from ARRAY_CONSTRUCT");
+    assert_eq!(parsed, json!([1, 2, 3]));
 }

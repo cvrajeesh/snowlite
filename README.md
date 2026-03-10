@@ -2,6 +2,9 @@
 
 [![codecov](https://codecov.io/gh/cvrajeesh/local-db/branch/main/graph/badge.svg)](https://codecov.io/gh/cvrajeesh/local-db)
 
+> **⚠️ Experimental — learning project**
+> This repository is an experiment in *vibe coding* — building software iteratively with AI assistance. It is not production-ready, not actively maintained, and makes no guarantees of correctness or stability. Use it to learn, hack, or get inspired, but don't depend on it in production systems.
+
 A local SQLite-backed database driver that acts as a **drop-in replacement for Snowflake** in integration tests.
 
 Write your application code against the Snowflake SQL dialect. In CI or on a developer laptop, swap the real Snowflake connection for `local-db` — no data warehouse required.

@@ -1,13 +1,10 @@
 [workspace]
-# Do not publish to crates.io — the library is consumed as a git dependency.
-# GitHub Releases (tags) are the distribution mechanism.
+# publish = false prevents release-plz from running `cargo publish`.
+# NOTE: Cargo.toml intentionally does NOT have `publish = false` because
+# release-plz 0.3.x reads that flag to determine whether a package is
+# "publishable", and setting it to false causes release-pr to skip the
+# package entirely — even when git_release_enable = true is configured.
+# The crates.io guard is enforced here instead.
 publish = false
-git_release_enable = true
-semver_check = false
-
-[[package]]
-# Explicit per-package override: release-pr skips packages with publish=false
-# before applying workspace defaults. This forces the package into the pipeline.
-name = "snowlite"
 git_release_enable = true
 semver_check = false

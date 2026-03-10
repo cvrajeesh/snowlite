@@ -81,7 +81,9 @@ unchanged — but this is **untested** end-to-end.
 
 ### Operators (`src/translator/functions.rs` or `src/translator/rewriter.rs`)
 - [ ] `::` cast operator (e.g. `val::INTEGER`) — rewrite to `CAST(val AS INTEGER)`
-- [ ] `RLIKE` / `REGEXP` as infix operator — rewrite to `regexp(pattern, text)` call
+
+### Statements (no-op list — `src/translator/noop.rs`)
+- [ ] `MERGE INTO … USING … WHEN MATCHED` — add to no-op list with a clear error message (SQLite fundamental limitation)
 
 ---
 
@@ -110,6 +112,18 @@ unchanged — but this is **untested** end-to-end.
       (invalid SQL); should become `SELECT ... ORDER BY col LIMIT N` (`src/translator/rewriter.rs`)
 - [ ] Add fuzz testing for translator regex patterns (prevent ReDoS on adversarial SQL)
 - [ ] Add query timeout / statement size limits in `src/connection.rs`
+
+### Bug Fixes (known incorrect behaviour)
+- [ ] `LPAD`/`RPAD` with empty pad string — currently returns original string; Snowflake raises an error (`src/connection.rs`)
+- [ ] `get_path(col, 'a.b')` multi-segment paths — identifier stripper corrupts dotted paths; fix by protecting string literal arguments in the identifier stripper (`src/translator/identifiers.rs`)
+- [ ] Decimal precision — `NUMBER(p, s)` stored as SQLite `REAL` (64-bit float); document clearly and add a test showing the precision limit
+- [ ] String collation — `COLLATE` clauses are stripped; add a test documenting where case-sensitivity differs from Snowflake
+- [ ] Recursive CTEs — SQLite recursion depth limit differs from Snowflake; add a test to document the behaviour
+
+### Unsupported (document-only, no fix possible in SQLite)
+- [ ] `CONVERT_TIMEZONE` — document workaround clearly in limitations.md (already done)
+- [ ] `FLATTEN` / lateral joins — document workaround clearly in limitations.md (already done)
+- [ ] `MERGE INTO` — emit a descriptive error rather than a cryptic SQLite parse error
 
 ---
 

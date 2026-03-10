@@ -4,3 +4,10 @@
 publish = false
 git_release_enable = true
 semver_check = false
+
+[[package]]
+# Explicit per-package override: release-pr skips packages with publish=false
+# before applying workspace defaults. This forces the package into the pipeline.
+name = "snowlite"
+git_release_enable = true
+semver_check = false

@@ -1478,6 +1478,175 @@ fn window_function_rank() {
     assert_eq!(rows[2].get::<i64>(1).unwrap(), 3);
 }
 
+#[test]
+fn window_function_dense_rank() {
+    let c = conn();
+    c.execute("CREATE TABLE scores (name TEXT, score INTEGER)", &[]).unwrap();
+    c.execute(
+        "INSERT INTO scores VALUES ('Alice', 100), ('Bob', 90), ('Charlie', 100), ('Dave', 80)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT name, DENSE_RANK() OVER (ORDER BY score DESC) as dr FROM scores ORDER BY dr, name",
+            &[],
+        )
+        .unwrap();
+    // DENSE_RANK: Alice=1, Charlie=1, Bob=2, Dave=3 (no gaps unlike RANK)
+    assert_eq!(rows[0].get::<i64>(1).unwrap(), 1); // Alice
+    assert_eq!(rows[1].get::<i64>(1).unwrap(), 1); // Charlie
+    assert_eq!(rows[2].get::<i64>(1).unwrap(), 2); // Bob (DENSE_RANK=2, not 3)
+    assert_eq!(rows[3].get::<i64>(1).unwrap(), 3); // Dave
+}
+
+#[test]
+fn window_function_ntile() {
+    let c = conn();
+    c.execute("CREATE TABLE t (val INTEGER)", &[]).unwrap();
+    c.execute(
+        "INSERT INTO t VALUES (10), (20), (30), (40), (50), (60), (70), (80)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT val, NTILE(4) OVER (ORDER BY val) as bucket FROM t ORDER BY val",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(rows.len(), 8);
+    // 8 rows into 4 buckets → 2 rows each; first two rows are bucket 1
+    assert_eq!(rows[0].get::<i64>(1).unwrap(), 1);
+    assert_eq!(rows[1].get::<i64>(1).unwrap(), 1);
+    assert_eq!(rows[2].get::<i64>(1).unwrap(), 2);
+    assert_eq!(rows[7].get::<i64>(1).unwrap(), 4);
+}
+
+#[test]
+fn window_function_lag() {
+    let c = conn();
+    c.execute("CREATE TABLE t (period INTEGER, revenue REAL)", &[]).unwrap();
+    c.execute(
+        "INSERT INTO t VALUES (1, 100.0), (2, 150.0), (3, 120.0), (4, 180.0)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT period, revenue, LAG(revenue, 1, 0) OVER (ORDER BY period) as prev_revenue FROM t ORDER BY period",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(rows.len(), 4);
+    // First row has no previous → default value 0
+    assert_eq!(rows[0].get::<f64>(2).unwrap(), 0.0);
+    // Second row sees first row's revenue
+    assert_eq!(rows[1].get::<f64>(2).unwrap(), 100.0);
+    assert_eq!(rows[2].get::<f64>(2).unwrap(), 150.0);
+}
+
+#[test]
+fn window_function_lead() {
+    let c = conn();
+    c.execute("CREATE TABLE t (period INTEGER, revenue REAL)", &[]).unwrap();
+    c.execute(
+        "INSERT INTO t VALUES (1, 100.0), (2, 150.0), (3, 120.0), (4, 180.0)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT period, revenue, LEAD(revenue, 1, 0) OVER (ORDER BY period) as next_revenue FROM t ORDER BY period",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(rows.len(), 4);
+    // Last row has no next → default value 0
+    assert_eq!(rows[3].get::<f64>(2).unwrap(), 0.0);
+    // First row sees second row's revenue
+    assert_eq!(rows[0].get::<f64>(2).unwrap(), 150.0);
+    assert_eq!(rows[1].get::<f64>(2).unwrap(), 120.0);
+}
+
+#[test]
+fn window_function_first_value_last_value() {
+    let c = conn();
+    c.execute("CREATE TABLE t (dept TEXT, salary REAL)", &[]).unwrap();
+    c.execute(
+        "INSERT INTO t VALUES ('eng', 90000), ('eng', 110000), ('eng', 95000)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT dept, salary,
+                FIRST_VALUE(salary) OVER (PARTITION BY dept ORDER BY salary
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as lowest,
+                LAST_VALUE(salary)  OVER (PARTITION BY dept ORDER BY salary
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as highest
+             FROM t ORDER BY salary",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(rows.len(), 3);
+    // Every row should see the partition min as FIRST_VALUE and max as LAST_VALUE
+    assert_eq!(rows[0].get::<f64>(2).unwrap(), 90000.0); // lowest
+    assert_eq!(rows[0].get::<f64>(3).unwrap(), 110000.0); // highest
+    assert_eq!(rows[2].get::<f64>(2).unwrap(), 90000.0);
+    assert_eq!(rows[2].get::<f64>(3).unwrap(), 110000.0);
+}
+
+#[test]
+fn window_function_running_sum_with_frame() {
+    let c = conn();
+    c.execute("CREATE TABLE t (day INTEGER, amount REAL)", &[]).unwrap();
+    c.execute(
+        "INSERT INTO t VALUES (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT day, amount,
+                SUM(amount) OVER (ORDER BY day ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as running_total
+             FROM t ORDER BY day",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0].get::<f64>(2).unwrap(), 10.0);
+    assert_eq!(rows[1].get::<f64>(2).unwrap(), 30.0);
+    assert_eq!(rows[2].get::<f64>(2).unwrap(), 60.0);
+    assert_eq!(rows[3].get::<f64>(2).unwrap(), 100.0);
+}
+
+#[test]
+fn window_function_nth_value() {
+    let c = conn();
+    c.execute("CREATE TABLE t (val INTEGER)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES (10), (20), (30), (40)", &[]).unwrap();
+
+    let rows = c
+        .query(
+            "SELECT val,
+                NTH_VALUE(val, 2) OVER (ORDER BY val ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as second
+             FROM t ORDER BY val",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(rows.len(), 4);
+    // Every row should see 20 as the 2nd value in the ordered frame
+    assert_eq!(rows[0].get::<i64>(1).unwrap(), 20);
+    assert_eq!(rows[3].get::<i64>(1).unwrap(), 20);
+}
+
 // ── Config options ────────────────────────────────────────────────────────────
 
 #[test]

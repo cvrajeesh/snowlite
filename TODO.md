@@ -17,11 +17,12 @@ These are hit in most real Snowflake workloads.
 SQLite supports window functions natively (since 3.25.0), so Snowflake syntax may pass through
 unchanged — but this is **untested** end-to-end.
 
-- [ ] `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)` — add integration test
-- [ ] `RANK()`, `DENSE_RANK()`, `NTILE(n)` — add integration tests
-- [ ] `LAG(expr, offset, default) OVER (...)` / `LEAD(...)` — add integration tests
-- [ ] `FIRST_VALUE()` / `LAST_VALUE()` with frame specs — add integration tests
-- [ ] `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` frame boundaries — add test
+- [x] `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)` — integration test added
+- [x] `RANK()`, `DENSE_RANK()`, `NTILE(n)` — integration tests added
+- [x] `LAG(expr, offset, default) OVER (...)` / `LEAD(...)` — integration tests added
+- [x] `FIRST_VALUE()` / `LAST_VALUE()` with frame specs — integration tests added
+- [x] `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` frame boundaries — integration test added
+- [x] `NTH_VALUE(expr, n)` — integration test added
 
 ### String Functions (`src/translator/functions.rs` + `src/connection.rs`)
 - [ ] `REGEXP_REPLACE(str, pattern, replacement)` — needs custom SQLite function

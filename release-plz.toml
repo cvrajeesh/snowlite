@@ -1,10 +1,10 @@
 [workspace]
+# git_only = true: use git tags (e.g. v0.2.0) as the version baseline.
+# Without this, release-plz queries crates.io to determine the current
+# version. Since snowlite is not published to crates.io, the registry
+# returns nothing and release-plz silently skips the package entirely.
 # publish = false prevents release-plz from running `cargo publish`.
-# NOTE: Cargo.toml intentionally does NOT have `publish = false` because
-# release-plz 0.3.x reads that flag to determine whether a package is
-# "publishable", and setting it to false causes release-pr to skip the
-# package entirely — even when git_release_enable = true is configured.
-# The crates.io guard is enforced here instead.
+git_only = true
 publish = false
 git_release_enable = true
 semver_check = false

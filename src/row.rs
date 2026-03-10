@@ -6,8 +6,8 @@ use std::collections::HashMap;
 /// Values can be accessed either by zero-based column index or by column name.
 ///
 /// ```rust,no_run
-/// # use local_db::{Connection, Row};
-/// # fn main() -> local_db::Result<()> {
+/// # use snowlite::{Connection, Row};
+/// # fn main() -> snowlite::Result<()> {
 /// # let conn = Connection::open_in_memory()?;
 /// # conn.execute("CREATE TABLE t (id INTEGER, name TEXT)", &[])?;
 /// let rows = conn.query("SELECT id, name FROM t", &[])?;

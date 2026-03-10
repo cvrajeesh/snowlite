@@ -1,4 +1,4 @@
-//! # local-db
+//! # snowlite
 //!
 //! A local SQLite-backed database driver that acts as an in-place replacement for
 //! Snowflake in integration tests. The driver translates Snowflake SQL dialect to
@@ -8,9 +8,9 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use local_db::{Connection, Config, Row};
+//! use snowlite::{Connection, Config, Row};
 //!
-//! # fn main() -> Result<(), local_db::Error> {
+//! # fn main() -> Result<(), snowlite::Error> {
 //! // Create an in-memory database (great for unit / integration tests)
 //! let conn = Connection::open_in_memory()?;
 //!

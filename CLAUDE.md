@@ -12,7 +12,7 @@ RUST_LOG=trace cargo test # Run tests with translation trace logging
 
 ## Project Overview
 
-**local-db** is a Rust library that provides a local SQLite-backed database driver as a drop-in replacement for Snowflake in integration tests. It translates Snowflake SQL dialect to SQLite-compatible SQL via regex-based rewriting passes.
+**snowlite** is a Rust library that provides a local SQLite-backed database driver as a drop-in replacement for Snowflake in integration tests. It translates Snowflake SQL dialect to SQLite-compatible SQL via regex-based rewriting passes.
 
 ## Architecture
 

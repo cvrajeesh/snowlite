@@ -1,6 +1,6 @@
 # Known Limitations
 
-local-db is a best-effort translator, not a full Snowflake emulator.
+snowlite is a best-effort translator, not a full Snowflake emulator.
 The items below are known gaps. PRs welcome — see [TODO.md](../TODO.md) for the tracked backlog.
 
 ---

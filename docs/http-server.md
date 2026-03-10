@@ -1,6 +1,6 @@
 # HTTP Server
 
-`local-db` ships an optional HTTP server that implements the **Snowflake wire protocol**.
+`snowlite` ships an optional HTTP server that implements the **Snowflake wire protocol**.
 Any Snowflake connector — Python, Node.js, Go, Java, etc. — can point at it instead of a
 real Snowflake account.
 
@@ -13,37 +13,37 @@ independent of each other.
 
 ### Pre-built binary (no Rust required)
 
-Pre-built binaries are attached to every [GitHub Release](https://github.com/cvrajeesh/local-db/releases/latest):
+Pre-built binaries are attached to every [GitHub Release](https://github.com/cvrajeesh/snowlite/releases/latest):
 
 | Platform | File |
 |---|---|
-| macOS (Intel + Apple Silicon) | `local-db-server-macos-universal` |
-| Linux x86_64 | `local-db-server-linux-x86_64` |
-| Linux aarch64 | `local-db-server-linux-aarch64` |
-| Windows x86_64 | `local-db-server-windows-x86_64.exe` |
+| macOS (Intel + Apple Silicon) | `snowlite-server-macos-universal` |
+| Linux x86_64 | `snowlite-server-linux-x86_64` |
+| Linux aarch64 | `snowlite-server-linux-aarch64` |
+| Windows x86_64 | `snowlite-server-windows-x86_64.exe` |
 
 **macOS / Linux — one-liner:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cvrajeesh/local-db/main/install.sh | sh
-./local-db-server
+curl -fsSL https://raw.githubusercontent.com/cvrajeesh/snowlite/main/install.sh | sh
+./snowlite-server
 ```
 
 **Windows — PowerShell:**
 
 ```powershell
-irm https://raw.githubusercontent.com/cvrajeesh/local-db/main/install.ps1 | iex
-.\local-db-server.exe
+irm https://raw.githubusercontent.com/cvrajeesh/snowlite/main/install.ps1 | iex
+.\snowlite-server.exe
 ```
 
 ### Build from source (requires Rust)
 
 ```bash
 # Build and start on default port 8765
-cargo run --features server --bin local-db-server
+cargo run --features server --bin snowlite-server
 
 # Custom port
-cargo run --features server --bin local-db-server -- --port 9000
+cargo run --features server --bin snowlite-server -- --port 9000
 ```
 
 ---
@@ -267,7 +267,7 @@ import snowflake.connector
 
 @pytest.fixture
 def sf():
-    """Fresh local-db session per test (requires local-db-server running)."""
+    """Fresh snowlite session per test (requires snowlite-server running)."""
     conn = snowflake.connector.connect(
         host="localhost", port=8765, protocol="http",
         user="test", password="test", account="test",
@@ -337,5 +337,5 @@ connection.connect((err, conn) => {
 
 ```toml
 [dev-dependencies]
-local-db = { git = "https://github.com/cvrajeesh/local-db", features = ["server"] }
+snowlite = { git = "https://github.com/cvrajeesh/snowlite", features = ["server"] }
 ```

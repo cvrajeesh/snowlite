@@ -1,19 +1,19 @@
 [package]
-name = "local-db"
+name = "snowlite"
 version = "0.2.0"
 edition = "2021"
 description = "Local SQLite-backed driver that acts as an in-place replacement for Snowflake in integration tests"
 license = "MIT"
-repository = "https://github.com/cvrajeesh/local-db"
+repository = "https://github.com/cvrajeesh/snowlite"
 keywords = ["snowflake", "sqlite", "testing", "database", "driver"]
 categories = ["database", "development-tools::testing"]
 
 [lib]
-name = "local_db"
+name = "snowlite"
 path = "src/lib.rs"
 
 [[bin]]
-name = "local-db-server"
+name = "snowlite-server"
 path = "src/bin/server.rs"
 required-features = ["server"]
 

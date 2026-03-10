@@ -1,6 +1,6 @@
 # Architecture
 
-This document explains how local-db translates Snowflake SQL to SQLite SQL.
+This document explains how snowlite translates Snowflake SQL to SQLite SQL.
 
 ---
 

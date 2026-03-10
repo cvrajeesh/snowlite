@@ -27,7 +27,7 @@ use tower::ServiceExt; // for `oneshot`
 
 mod app {
     use axum::Router;
-    use local_db::Connection;
+    use snowlite::Connection;
     use std::collections::HashMap;
     use std::sync::{mpsc, Arc, Mutex};
     use std::thread;
@@ -43,14 +43,14 @@ mod app {
 
     #[allow(dead_code)]
     pub(super) enum ConnCmd {
-        Execute { sql: String, bindings: Vec<local_db::Value>, reply: mpsc::Sender<ConnResult> },
-        Query   { sql: String, bindings: Vec<local_db::Value>, reply: mpsc::Sender<ConnResult> },
+        Execute { sql: String, bindings: Vec<snowlite::Value>, reply: mpsc::Sender<ConnResult> },
+        Query   { sql: String, bindings: Vec<snowlite::Value>, reply: mpsc::Sender<ConnResult> },
         Close,
     }
 
     pub(super) enum ConnResult {
         Execute { affected_rows: usize },
-        Query   { columns: Vec<String>, rows: Vec<Vec<local_db::Value>> },
+        Query   { columns: Vec<String>, rows: Vec<Vec<snowlite::Value>> },
         Error(String),
     }
 
@@ -114,7 +114,7 @@ mod app {
                                 let columns = rows.first().map(|r| r.columns().to_vec()).unwrap_or_default();
                                 let data = rows.iter().map(|row| {
                                     (0..row.column_count())
-                                        .map(|i| row.value(i).cloned().unwrap_or(local_db::Value::Null))
+                                        .map(|i| row.value(i).cloned().unwrap_or(snowlite::Value::Null))
                                         .collect()
                                 }).collect();
                                 ConnResult::Query { columns, rows: data }
@@ -144,40 +144,40 @@ mod app {
         format!("query-{}", CTR.fetch_add(1, Ordering::Relaxed))
     }
 
-    fn parse_bindings(bindings: &Option<JsonValue>) -> Vec<local_db::Value> {
+    fn parse_bindings(bindings: &Option<JsonValue>) -> Vec<snowlite::Value> {
         let Some(b) = bindings else { return vec![] };
         let Some(obj) = b.as_object() else { return vec![] };
-        let mut pairs: Vec<(usize, local_db::Value)> = obj.iter().filter_map(|(k, v)| {
+        let mut pairs: Vec<(usize, snowlite::Value)> = obj.iter().filter_map(|(k, v)| {
             let idx: usize = k.parse().ok()?;
             let val = if let Some(o) = v.as_object() {
                 let raw = o.get("value").unwrap_or(v);
                 let hint = o.get("type").and_then(|t| t.as_str()).unwrap_or("TEXT");
                 match (raw, hint.to_uppercase().as_str()) {
-                    (JsonValue::Null, _) => local_db::Value::Null,
+                    (JsonValue::Null, _) => snowlite::Value::Null,
                     (JsonValue::String(s), "FIXED" | "INTEGER" | "NUMBER") =>
-                        s.parse::<i64>().map(local_db::Value::Integer).unwrap_or_else(|_| local_db::Value::Text(s.clone())),
+                        s.parse::<i64>().map(snowlite::Value::Integer).unwrap_or_else(|_| snowlite::Value::Text(s.clone())),
                     (JsonValue::String(s), "REAL" | "FLOAT") =>
-                        s.parse::<f64>().map(local_db::Value::Real).unwrap_or_else(|_| local_db::Value::Text(s.clone())),
+                        s.parse::<f64>().map(snowlite::Value::Real).unwrap_or_else(|_| snowlite::Value::Text(s.clone())),
                     (JsonValue::String(s), "BOOLEAN") => match s.to_lowercase().as_str() {
-                        "true" | "1" => local_db::Value::Boolean(true),
-                        _ => local_db::Value::Boolean(false),
+                        "true" | "1" => snowlite::Value::Boolean(true),
+                        _ => snowlite::Value::Boolean(false),
                     },
-                    (JsonValue::String(s), _) => local_db::Value::Text(s.clone()),
-                    (JsonValue::Number(n), _) => n.as_i64().map(local_db::Value::Integer)
-                        .or_else(|| n.as_f64().map(local_db::Value::Real))
-                        .unwrap_or(local_db::Value::Null),
-                    (JsonValue::Bool(b), _) => local_db::Value::Boolean(*b),
-                    (other, _) => local_db::Value::Text(other.to_string()),
+                    (JsonValue::String(s), _) => snowlite::Value::Text(s.clone()),
+                    (JsonValue::Number(n), _) => n.as_i64().map(snowlite::Value::Integer)
+                        .or_else(|| n.as_f64().map(snowlite::Value::Real))
+                        .unwrap_or(snowlite::Value::Null),
+                    (JsonValue::Bool(b), _) => snowlite::Value::Boolean(*b),
+                    (other, _) => snowlite::Value::Text(other.to_string()),
                 }
             } else {
                 match v {
-                    JsonValue::Null => local_db::Value::Null,
-                    JsonValue::Bool(b) => local_db::Value::Boolean(*b),
-                    JsonValue::Number(n) => n.as_i64().map(local_db::Value::Integer)
-                        .or_else(|| n.as_f64().map(local_db::Value::Real))
-                        .unwrap_or(local_db::Value::Null),
-                    JsonValue::String(s) => local_db::Value::Text(s.clone()),
-                    other => local_db::Value::Text(other.to_string()),
+                    JsonValue::Null => snowlite::Value::Null,
+                    JsonValue::Bool(b) => snowlite::Value::Boolean(*b),
+                    JsonValue::Number(n) => n.as_i64().map(snowlite::Value::Integer)
+                        .or_else(|| n.as_f64().map(snowlite::Value::Real))
+                        .unwrap_or(snowlite::Value::Null),
+                    JsonValue::String(s) => snowlite::Value::Text(s.clone()),
+                    other => snowlite::Value::Text(other.to_string()),
                 }
             };
             Some((idx, val))
@@ -192,23 +192,23 @@ mod app {
             || t.starts_with("SHOW") || t.starts_with("DESCRIBE") || t.starts_with("EXPLAIN")
     }
 
-    fn to_sf_string(v: &local_db::Value) -> JsonValue {
+    fn to_sf_string(v: &snowlite::Value) -> JsonValue {
         match v {
-            local_db::Value::Null       => JsonValue::Null,
-            local_db::Value::Integer(i) => JsonValue::String(i.to_string()),
-            local_db::Value::Real(r)    => JsonValue::String(r.to_string()),
-            local_db::Value::Text(s)    => JsonValue::String(s.clone()),
-            local_db::Value::Boolean(b) => JsonValue::String(if *b { "1" } else { "0" }.to_string()),
-            local_db::Value::Blob(b)    => JsonValue::String(b.iter().map(|x| format!("{x:02x}")).collect()),
+            snowlite::Value::Null       => JsonValue::Null,
+            snowlite::Value::Integer(i) => JsonValue::String(i.to_string()),
+            snowlite::Value::Real(r)    => JsonValue::String(r.to_string()),
+            snowlite::Value::Text(s)    => JsonValue::String(s.clone()),
+            snowlite::Value::Boolean(b) => JsonValue::String(if *b { "1" } else { "0" }.to_string()),
+            snowlite::Value::Blob(b)    => JsonValue::String(b.iter().map(|x| format!("{x:02x}")).collect()),
         }
     }
 
-    fn sf_type(v: &local_db::Value) -> &'static str {
+    fn sf_type(v: &snowlite::Value) -> &'static str {
         match v {
-            local_db::Value::Integer(_) => "FIXED",
-            local_db::Value::Real(_)    => "REAL",
-            local_db::Value::Boolean(_) => "BOOLEAN",
-            local_db::Value::Blob(_)    => "BINARY",
+            snowlite::Value::Integer(_) => "FIXED",
+            snowlite::Value::Real(_)    => "REAL",
+            snowlite::Value::Boolean(_) => "BOOLEAN",
+            snowlite::Value::Blob(_)    => "BINARY",
             _                           => "TEXT",
         }
     }
@@ -217,7 +217,7 @@ mod app {
         let auth = headers.get("Authorization")?.to_str().ok()?;
         let rest = auth.strip_prefix("Snowflake Token=\"")?;
         let token = rest.trim_end_matches('"');
-        token.strip_prefix("local-db-token-").map(|s| s.to_string())
+        token.strip_prefix("snowlite-token-").map(|s| s.to_string())
     }
 
     // ── SQL preprocessing ────────────────────────────────────────────────────
@@ -263,7 +263,7 @@ mod app {
 
     async fn login(State(state): State<AppState>, Json(_body): Json<JsonValue>) -> Json<JsonValue> {
         let session_id = new_session_id();
-        let token = format!("local-db-token-{session_id}");
+        let token = format!("snowlite-token-{session_id}");
         let (tx, rx) = mpsc::channel();
         spawn_conn(rx);
         state.sessions.lock().unwrap().insert(session_id.clone(), ConnHandle { sender: tx });
@@ -481,7 +481,7 @@ async fn test_health() {
 #[tokio::test]
 async fn test_login_returns_token_and_session_info() {
     let (_, token) = login(new_app()).await;
-    assert!(token.starts_with("local-db-token-"), "token={token}");
+    assert!(token.starts_with("snowlite-token-"), "token={token}");
 }
 
 #[tokio::test]
@@ -519,7 +519,7 @@ async fn test_query_with_invalid_session_returns_401() {
         .method(http::Method::POST)
         .uri("/queries/v1/query-request")
         .header("Content-Type", "application/json")
-        .header("Authorization", "Snowflake Token=\"local-db-token-doesnotexist\"")
+        .header("Authorization", "Snowflake Token=\"snowlite-token-doesnotexist\"")
         .body(Body::from(json!({"sqlText": "SELECT 1"}).to_string()))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -797,7 +797,7 @@ async fn test_multiple_sequential_logins() {
     // Re-connecting (login/logout cycle) must always succeed.
     for _ in 0..3 {
         let (_, token) = login(new_app()).await;
-        assert!(token.starts_with("local-db-token-"));
+        assert!(token.starts_with("snowlite-token-"));
     }
 }
 

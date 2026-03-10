@@ -86,8 +86,8 @@ impl Connection {
     /// Returns the number of rows affected.
     ///
     /// ```rust,no_run
-    /// # use local_db::Connection;
-    /// # fn main() -> local_db::Result<()> {
+    /// # use snowlite::Connection;
+    /// # fn main() -> snowlite::Result<()> {
     /// let conn = Connection::open_in_memory()?;
     /// conn.execute("CREATE TABLE t (id INTEGER)", &[])?;
     /// conn.execute("INSERT INTO t VALUES (?)", &[&1i64])?;
@@ -116,8 +116,8 @@ impl Connection {
     /// Execute a query and return all matching rows.
     ///
     /// ```rust,no_run
-    /// # use local_db::{Connection, Row};
-    /// # fn main() -> local_db::Result<()> {
+    /// # use snowlite::{Connection, Row};
+    /// # fn main() -> snowlite::Result<()> {
     /// let conn = Connection::open_in_memory()?;
     /// # conn.execute("CREATE TABLE t (id INTEGER, name TEXT)", &[])?;
     /// let rows = conn.query("SELECT id, name FROM t WHERE id > ?", &[&0i64])?;

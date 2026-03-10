@@ -1,4 +1,4 @@
-# local-db: Missing Features TODO
+# snowlite: Missing Features TODO
 
 Full audit of the codebase against common Snowflake SQL usage patterns.
 The library is mature and well-tested (~140 integration tests, 60+ functions translated),

@@ -1,6 +1,6 @@
 # Supported SQL Reference
 
-This page documents every Snowflake SQL construct that local-db translates to SQLite.
+This page documents every Snowflake SQL construct that snowlite translates to SQLite.
 If something you need is missing, check [limitations.md](./limitations.md) or open an issue.
 
 ---

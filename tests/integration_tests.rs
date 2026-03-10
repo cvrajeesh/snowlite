@@ -1,8 +1,8 @@
-//! Integration tests for local-db.
+//! Integration tests for snowlite.
 //!
 //! Run with: `cargo test`
 
-use local_db::{Connection, Value};
+use snowlite::{Connection, Value};
 use serde_json;
 
 fn conn() -> Connection {
@@ -334,9 +334,9 @@ fn transaction_rollback() {
     let c = conn();
     c.execute("CREATE TABLE t (id INTEGER)", &[]).unwrap();
 
-    let _ = c.transaction(|conn| -> local_db::Result<()> {
+    let _ = c.transaction(|conn| -> snowlite::Result<()> {
         conn.execute("INSERT INTO t VALUES (1)", &[])?;
-        Err(local_db::Error::other("simulated error"))
+        Err(snowlite::Error::other("simulated error"))
     });
 
     let rows = c.query("SELECT COUNT(*) FROM t", &[]).unwrap();
@@ -379,10 +379,10 @@ fn type_conversion_u64_negative_returns_error() {
 /// f64 → i64: NaN must return a TypeConversion error, not silently become 0.
 #[test]
 fn type_conversion_f64_nan_to_i64_returns_error() {
-    use local_db::{Error, Value};
+    use snowlite::{Error, Value};
     // Build a Value::Real(NaN) directly and call from_value
     let v = Value::Real(f64::NAN);
-    let result = <i64 as local_db::row::FromValue>::from_value(&v);
+    let result = <i64 as snowlite::row::FromValue>::from_value(&v);
     assert!(
         result.is_err(),
         "converting NaN to i64 should be an error"
@@ -1651,7 +1651,7 @@ fn window_function_nth_value() {
 
 #[test]
 fn config_drop_before_create() {
-    use local_db::{Config, Connection};
+    use snowlite::{Config, Connection};
     let config = Config::new().with_drop_before_create();
     let c = Connection::open_in_memory_with_config(config).unwrap();
 
@@ -1668,7 +1668,7 @@ fn config_drop_before_create() {
 
 #[test]
 fn config_schema_prefix() {
-    use local_db::{Config, Connection};
+    use snowlite::{Config, Connection};
     let config = Config::new().with_schema_prefix();
     let c = Connection::open_in_memory_with_config(config).unwrap();
 

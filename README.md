@@ -1,13 +1,13 @@
-# local-db
+# snowlite
 
-[![codecov](https://codecov.io/gh/cvrajeesh/local-db/branch/main/graph/badge.svg)](https://codecov.io/gh/cvrajeesh/local-db)
+[![codecov](https://codecov.io/gh/cvrajeesh/snowlite/branch/main/graph/badge.svg)](https://codecov.io/gh/cvrajeesh/snowlite)
 
 > **⚠️ Experimental — learning project**
 > This repository is an experiment in *vibe coding* — building software iteratively with AI assistance. It is not production-ready, not actively maintained, and makes no guarantees of correctness or stability. Use it to learn, hack, or get inspired, but don't depend on it in production systems.
 
 A local SQLite-backed database driver that acts as a **drop-in replacement for Snowflake** in integration tests.
 
-Write your application code against the Snowflake SQL dialect. In CI or on a developer laptop, swap the real Snowflake connection for `local-db` — no data warehouse required.
+Write your application code against the Snowflake SQL dialect. In CI or on a developer laptop, swap the real Snowflake connection for `snowlite` — no data warehouse required.
 
 ---
 
@@ -37,14 +37,14 @@ Add to `Cargo.toml`:
 
 ```toml
 [dev-dependencies]
-local-db = { git = "https://github.com/cvrajeesh/local-db" }
+snowlite = { git = "https://github.com/cvrajeesh/snowlite" }
 ```
 
 ```rust
-use local_db::{Connection, Value};
+use snowlite::{Connection, Value};
 
 #[test]
-fn my_integration_test() -> local_db::Result<()> {
+fn my_integration_test() -> snowlite::Result<()> {
     let conn = Connection::open_in_memory()?;
 
     // DDL — Snowflake syntax works transparently
@@ -93,7 +93,7 @@ fn my_integration_test() -> local_db::Result<()> {
 ## Configuration
 
 ```rust
-use local_db::{Connection, Config};
+use snowlite::{Connection, Config};
 
 let conn = Connection::open_in_memory_with_config(
     Config::new()
@@ -108,22 +108,22 @@ See [docs/configuration.md](./docs/configuration.md) for full details.
 
 ## HTTP server (multi-language access)
 
-`local-db` ships an optional HTTP server that implements the Snowflake wire protocol.
+`snowlite` ships an optional HTTP server that implements the Snowflake wire protocol.
 Any Snowflake connector — Python, Node.js, Go, Java, etc. — can point at it instead of
 a real Snowflake account.
 
 **macOS / Linux — one-liner install:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cvrajeesh/local-db/main/install.sh | sh
-./local-db-server
+curl -fsSL https://raw.githubusercontent.com/cvrajeesh/snowlite/main/install.sh | sh
+./snowlite-server
 ```
 
 **Windows — PowerShell:**
 
 ```powershell
-irm https://raw.githubusercontent.com/cvrajeesh/local-db/main/install.ps1 | iex
-.\local-db-server.exe
+irm https://raw.githubusercontent.com/cvrajeesh/snowlite/main/install.ps1 | iex
+.\snowlite-server.exe
 ```
 
 See [docs/http-server.md](./docs/http-server.md) for connection examples in Python and Node.js.

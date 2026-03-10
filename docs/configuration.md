@@ -3,7 +3,7 @@
 `Connection` accepts an optional `Config` struct that controls translator behaviour.
 
 ```rust
-use local_db::{Connection, Config};
+use snowlite::{Connection, Config};
 
 let conn = Connection::open_in_memory_with_config(
     Config::new()
@@ -76,7 +76,7 @@ assert_eq!(rows[0].get::<i64>(0)?, 0); // table is empty
 All examples above use in-memory databases. For a persistent database:
 
 ```rust
-use local_db::{Connection, Config};
+use snowlite::{Connection, Config};
 use std::path::Path;
 
 // Default config

@@ -1,10 +1,10 @@
 #!/bin/sh
-# Install local-db-server — downloads the pre-built binary for your platform.
-# Usage: curl -fsSL https://raw.githubusercontent.com/cvrajeesh/local-db/main/install.sh | sh
+# Install snowlite-server — downloads the pre-built binary for your platform.
+# Usage: curl -fsSL https://raw.githubusercontent.com/cvrajeesh/snowlite/main/install.sh | sh
 set -e
 
-REPO="cvrajeesh/local-db"
-BINARY="local-db-server"
+REPO="cvrajeesh/snowlite"
+BINARY="snowlite-server"
 
 # Detect OS
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -48,7 +48,7 @@ fi
 chmod +x "$BINARY"
 
 echo ""
-echo "local-db-server installed → ./${BINARY}"
+echo "snowlite-server installed → ./${BINARY}"
 echo ""
 echo "Run it:"
 echo "  ./${BINARY}              # default port 8765"

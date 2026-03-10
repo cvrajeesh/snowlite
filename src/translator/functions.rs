@@ -94,6 +94,8 @@ static SIMPLE_RULES: Lazy<Vec<Rule>> = Lazy::new(|| {
         Rule::new(r"(?i)\bWEEKOFYEAR\s*\(([^)]+)\)", "CAST(STRFTIME('%W', $1) AS INTEGER)"),
         Rule::new(r"(?i)\bQUARTER\s*\(([^)]+)\)", "((CAST(STRFTIME('%m', $1) AS INTEGER) + 2) / 3)"),
         // String functions
+        // RLIKE is a Snowflake alias for REGEXP; SQLite's REGEXP operator calls regexp(pattern, text)
+        Rule::new(r"(?i)\bRLIKE\b", "REGEXP"),
         Rule::new(r"(?i)\bCONTAINS\s*\(([^,]+),\s*([^)]+)\)", "(INSTR($1, $2) > 0)"),
         Rule::new(r"(?i)\bSTARTSWITH\s*\(([^,]+),\s*([^)]+)\)", "($1 LIKE $2 || '%')"),
         Rule::new(r"(?i)\bENDSWITH\s*\(([^,]+),\s*([^)]+)\)", "($1 LIKE '%' || $2)"),

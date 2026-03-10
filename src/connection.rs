@@ -230,25 +230,159 @@ impl Connection {
 
 // ── Custom SQLite function registrations ────────────────────────────────────
 
+fn build_regex(pattern: &str) -> std::result::Result<regex::Regex, rusqlite::Error> {
+    regex::RegexBuilder::new(pattern)
+        .size_limit(1 << 20)
+        .dfa_size_limit(1 << 20)
+        .build()
+        .map_err(|_| {
+            rusqlite::Error::UserFunctionError(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid or too complex regular expression",
+            )))
+        })
+}
+
 fn register_custom_functions(conn: &rusqlite::Connection) -> Result<()> {
     use rusqlite::functions::FunctionFlags;
+    let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
 
-    // REGEXP support (used by REGEXP_LIKE / RLIKE)
-    conn.create_scalar_function("regexp", 2, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
+    // REGEXP support (used by RLIKE / REGEXP operator — SQLite calls regexp(pattern, text))
+    conn.create_scalar_function("regexp", 2, det, |ctx| {
         let pattern: String = ctx.get(0)?;
         let text: String = ctx.get(1)?;
-        // Limit compiled regex size and DFA size to prevent memory/CPU exhaustion
-        let re = regex::RegexBuilder::new(&pattern)
-            .size_limit(1 << 20) // 1 MiB compiled size limit
-            .dfa_size_limit(1 << 20) // 1 MiB DFA size limit
-            .build()
-            .map_err(|_| {
-                rusqlite::Error::UserFunctionError(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "invalid or too complex regular expression",
-                )))
-            })?;
-        Ok(re.is_match(&text))
+        Ok(build_regex(&pattern)?.is_match(&text))
+    })?;
+
+    // REGEXP_LIKE(text, pattern) — Snowflake function form (note: arg order differs from regexp())
+    conn.create_scalar_function("regexp_like", 2, det, |ctx| {
+        let text: String = ctx.get(0)?;
+        let pattern: String = ctx.get(1)?;
+        Ok(build_regex(&pattern)?.is_match(&text))
+    })?;
+
+    // REGEXP_REPLACE(text, pattern, replacement [, position [, occurrence]])
+    conn.create_scalar_function("regexp_replace", -1, det, |ctx| {
+        if ctx.len() < 3 {
+            return Err(rusqlite::Error::UserFunctionError(Box::new(
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "REGEXP_REPLACE requires at least 3 arguments"),
+            )));
+        }
+        let text: String = ctx.get(0)?;
+        let pattern: String = ctx.get(1)?;
+        let replacement: String = ctx.get(2)?;
+        let re = build_regex(&pattern)?;
+        Ok(re.replace_all(&text, replacement.as_str()).into_owned())
+    })?;
+
+    // REGEXP_SUBSTR(text, pattern [, position [, occurrence]])
+    conn.create_scalar_function("regexp_substr", -1, det, |ctx| {
+        if ctx.len() < 2 {
+            return Err(rusqlite::Error::UserFunctionError(Box::new(
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "REGEXP_SUBSTR requires at least 2 arguments"),
+            )));
+        }
+        let text: String = ctx.get(0)?;
+        let pattern: String = ctx.get(1)?;
+        let position: usize = if ctx.len() > 2 {
+            (ctx.get::<i64>(2)? as usize).saturating_sub(1)
+        } else {
+            0
+        };
+        let occurrence: usize = if ctx.len() > 3 { ctx.get::<i64>(3)? as usize } else { 1 };
+        let re = build_regex(&pattern)?;
+        let search_in = &text[position.min(text.len())..];
+        let mut count = 0usize;
+        for m in re.find_iter(search_in) {
+            count += 1;
+            if count == occurrence {
+                return Ok(Some(m.as_str().to_string()));
+            }
+        }
+        Ok(None)
+    })?;
+
+    // LPAD(str, len [, pad_str])
+    conn.create_scalar_function("lpad", -1, det, |ctx| {
+        let s: String = ctx.get(0)?;
+        let len: i64 = ctx.get(1)?;
+        let pad: String = if ctx.len() > 2 { ctx.get(2)? } else { " ".to_string() };
+        let len = len as usize;
+        let s_chars: Vec<char> = s.chars().collect();
+        if s_chars.len() >= len {
+            return Ok(s_chars[..len].iter().collect::<String>());
+        }
+        if pad.is_empty() {
+            return Ok(s);
+        }
+        let needed = len - s_chars.len();
+        let padding: String = pad.chars().cycle().take(needed).collect();
+        Ok(format!("{}{}", padding, s))
+    })?;
+
+    // RPAD(str, len [, pad_str])
+    conn.create_scalar_function("rpad", -1, det, |ctx| {
+        let s: String = ctx.get(0)?;
+        let len: i64 = ctx.get(1)?;
+        let pad: String = if ctx.len() > 2 { ctx.get(2)? } else { " ".to_string() };
+        let len = len as usize;
+        let s_chars: Vec<char> = s.chars().collect();
+        if s_chars.len() >= len {
+            return Ok(s_chars[..len].iter().collect::<String>());
+        }
+        if pad.is_empty() {
+            return Ok(s);
+        }
+        let needed = len - s_chars.len();
+        let padding: String = pad.chars().cycle().take(needed).collect();
+        Ok(format!("{}{}", s, padding))
+    })?;
+
+    // INITCAP(str) — capitalise first letter of each whitespace-delimited word
+    conn.create_scalar_function("initcap", 1, det, |ctx| {
+        let s: String = ctx.get(0)?;
+        let result = s
+            .split_whitespace()
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => {
+                        first.to_uppercase().to_string() + &chars.as_str().to_lowercase()
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        Ok(result)
+    })?;
+
+    // REPEAT(str, n)
+    conn.create_scalar_function("repeat", 2, det, |ctx| {
+        let s: String = ctx.get(0)?;
+        let n: i64 = ctx.get(1)?;
+        if n <= 0 {
+            return Ok(String::new());
+        }
+        Ok(s.repeat(n as usize))
+    })?;
+
+    // REVERSE(str)
+    conn.create_scalar_function("reverse", 1, det, |ctx| {
+        let s: String = ctx.get(0)?;
+        Ok(s.chars().rev().collect::<String>())
+    })?;
+
+    // CONCAT_WS(sep, s1, s2, ...) — join non-NULL args with separator
+    conn.create_scalar_function("concat_ws", -1, FunctionFlags::SQLITE_UTF8, |ctx| {
+        if ctx.len() < 1 {
+            return Ok(String::new());
+        }
+        let sep: String = ctx.get(0)?;
+        let parts: Vec<String> = (1..ctx.len())
+            .filter_map(|i| ctx.get::<Option<String>>(i).ok().flatten())
+            .collect();
+        Ok(parts.join(&sep))
     })?;
 
     // SPLIT_PART(string, delimiter, part_number)

@@ -25,16 +25,17 @@ unchanged — but this is **untested** end-to-end.
 - [x] `NTH_VALUE(expr, n)` — integration test added
 
 ### String Functions (`src/translator/functions.rs` + `src/connection.rs`)
-- [ ] `REGEXP_REPLACE(str, pattern, replacement)` — needs custom SQLite function
-- [ ] `REGEXP_SUBSTR(str, pattern [, pos, occurrence, flags])` — needs custom SQLite function
-- [ ] `REGEXP_LIKE(str, pattern)` / `RLIKE` infix operator — map to existing `regexp()` custom function
-- [ ] `LPAD(str, len [, pad])` — no SQLite equivalent; implement as custom function
-- [ ] `RPAD(str, len [, pad])` — same, custom function
-- [ ] `INITCAP(str)` — capitalize first letter of each word; custom function
-- [ ] `REPEAT(str, n)` — custom function
-- [ ] `REVERSE(str)` — custom function
-- [ ] `CONCAT_WS(sep, s1, s2, ...)` — rewrite to `s1 || sep || s2 || ...` or custom function
-- [ ] `REPLACE(str, from, to)` — verify SQLite native works; add test
+- [x] `REGEXP_REPLACE(str, pattern, replacement)` — custom SQLite function added
+- [x] `REGEXP_SUBSTR(str, pattern [, pos, occurrence])` — custom SQLite function added
+- [x] `REGEXP_LIKE(str, pattern)` — custom SQLite function added
+- [x] `RLIKE` infix operator — translator rewrites to `REGEXP` (SQLite operator)
+- [x] `LPAD(str, len [, pad])` — custom SQLite function added
+- [x] `RPAD(str, len [, pad])` — custom SQLite function added
+- [x] `INITCAP(str)` — custom SQLite function added
+- [x] `REPEAT(str, n)` — custom SQLite function added
+- [x] `REVERSE(str)` — custom SQLite function added
+- [x] `CONCAT_WS(sep, s1, s2, ...)` — custom SQLite function added (skips NULLs)
+- [x] `REPLACE(str, from, to)` — SQLite native, integration test added
 
 ### LISTAGG (`src/translator/functions.rs`)
 - [ ] `LISTAGG(expr, delim) WITHIN GROUP (ORDER BY ...)` — rewrite to `GROUP_CONCAT(expr, delim)`

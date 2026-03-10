@@ -2156,8 +2156,9 @@ fn query_one_returns_none_for_empty() {
 //          `r"(?i)\bZEROIFNULL\s*\(([^)]+)\)"` → `"COALESCE($1, 0)"`.
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ── String Functions ─────────────────────────────────────────────────────────
+
 #[test]
-#[ignore = "REGEXP_REPLACE not yet implemented: needs custom SQLite scalar function (see failure plan item 1)"]
 fn regexp_replace_function() {
     let c = conn();
     let rows = c
@@ -2168,7 +2169,16 @@ fn regexp_replace_function() {
 }
 
 #[test]
-#[ignore = "REGEXP_SUBSTR not yet implemented: needs custom SQLite scalar function (see failure plan item 1)"]
+fn regexp_replace_with_capture_group() {
+    let c = conn();
+    let rows = c
+        .query("SELECT REGEXP_REPLACE('2024-03-15', '(\\d{4})-(\\d{2})-(\\d{2})', '$3/$2/$1')", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "15/03/2024");
+}
+
+#[test]
 fn regexp_substr_function() {
     let c = conn();
     let rows = c
@@ -2179,7 +2189,47 @@ fn regexp_substr_function() {
 }
 
 #[test]
-#[ignore = "RLIKE operator not yet translated (see failure plan item 2)"]
+fn regexp_substr_with_occurrence() {
+    let c = conn();
+    // Find the 2nd occurrence of a digit sequence
+    let rows = c
+        .query("SELECT REGEXP_SUBSTR('abc 10 def 20 ghi', '[0-9]+', 1, 2)", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "20");
+}
+
+#[test]
+fn regexp_substr_no_match_returns_null() {
+    let c = conn();
+    let rows = c
+        .query("SELECT REGEXP_SUBSTR('hello', '[0-9]+')", &[])
+        .unwrap();
+    let result: Option<String> = rows[0].get(0).unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn regexp_like_function() {
+    let c = conn();
+    let rows = c
+        .query("SELECT REGEXP_LIKE('hello123', '[a-z]+[0-9]+')", &[])
+        .unwrap();
+    let result: bool = rows[0].get(0).unwrap();
+    assert!(result);
+}
+
+#[test]
+fn regexp_like_no_match() {
+    let c = conn();
+    let rows = c
+        .query("SELECT REGEXP_LIKE('hello', '^[0-9]+$')", &[])
+        .unwrap();
+    let result: bool = rows[0].get(0).unwrap();
+    assert!(!result);
+}
+
+#[test]
 fn rlike_operator() {
     let c = conn();
     c.execute("CREATE TABLE t (name TEXT)", &[]).unwrap();
@@ -2191,6 +2241,139 @@ fn rlike_operator() {
         .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get::<String>(0).unwrap(), "hello123");
+}
+
+#[test]
+fn lpad_with_spaces() {
+    let c = conn();
+    let rows = c
+        .query("SELECT LPAD('hello', 10)", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "     hello");
+}
+
+#[test]
+fn lpad_with_custom_pad() {
+    let c = conn();
+    let rows = c
+        .query("SELECT LPAD('42', 6, '0')", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "000042");
+}
+
+#[test]
+fn lpad_truncates_when_longer() {
+    let c = conn();
+    let rows = c
+        .query("SELECT LPAD('hello world', 5, '*')", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "hello");
+}
+
+#[test]
+fn rpad_with_spaces() {
+    let c = conn();
+    let rows = c
+        .query("SELECT RPAD('hello', 10)", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "hello     ");
+}
+
+#[test]
+fn rpad_with_custom_pad() {
+    let c = conn();
+    let rows = c
+        .query("SELECT RPAD('hi', 7, '-+')", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "hi-+-+-");
+}
+
+#[test]
+fn initcap_function() {
+    let c = conn();
+    let rows = c
+        .query("SELECT INITCAP('hello world foo')", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "Hello World Foo");
+}
+
+#[test]
+fn initcap_mixed_case() {
+    let c = conn();
+    let rows = c
+        .query("SELECT INITCAP('the QUICK brown FOX')", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "The Quick Brown Fox");
+}
+
+#[test]
+fn repeat_function() {
+    let c = conn();
+    let rows = c
+        .query("SELECT REPEAT('ab', 4)", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "abababab");
+}
+
+#[test]
+fn repeat_zero_times() {
+    let c = conn();
+    let rows = c
+        .query("SELECT REPEAT('abc', 0)", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "");
+}
+
+#[test]
+fn reverse_function() {
+    let c = conn();
+    let rows = c
+        .query("SELECT REVERSE('hello')", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "olleh");
+}
+
+#[test]
+fn concat_ws_function() {
+    let c = conn();
+    let rows = c
+        .query("SELECT CONCAT_WS(',', 'a', 'b', 'c')", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "a,b,c");
+}
+
+#[test]
+fn concat_ws_skips_nulls() {
+    let c = conn();
+    c.execute("CREATE TABLE t (a TEXT, b TEXT, c TEXT)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES ('x', NULL, 'z')", &[]).unwrap();
+    let rows = c
+        .query("SELECT CONCAT_WS('-', a, b, c) FROM t", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "x-z");
+}
+
+#[test]
+fn replace_function_native() {
+    // REPLACE is a SQLite native function — just verify it works end-to-end
+    let c = conn();
+    let rows = c
+        .query("SELECT REPLACE('hello world', 'world', 'Rust')", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "hello Rust");
 }
 
 #[test]

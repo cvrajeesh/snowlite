@@ -39,7 +39,11 @@ Confirm you are on the new branch before writing any code.
 
 ## Step 3 — Implement the change
 
-Plan and make the changes. Follow the project conventions in CLAUDE.md:
+**Write integration tests first, before any implementation code.** Run the tests to confirm they fail
+(proving the feature is missing), then implement the feature, then run the tests again to confirm
+they pass. This applies to all `feat` and `fix` changes; `test`-only changes skip the implementation sub-step.
+
+Follow the project conventions in CLAUDE.md:
 - Edit existing files rather than creating new ones where possible
 - Keep changes minimal and focused — no unrelated cleanup
 - Do not add comments, docstrings, or type annotations to code you did not change

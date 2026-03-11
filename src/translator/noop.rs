@@ -27,6 +27,7 @@ static NOOP_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
         r"(?i)^\s*PUT\s+FILE\b",
         r"(?i)^\s*GET\s+@",
         r"(?i)^\s*REMOVE\s+@",
+        r"(?i)^\s*LIST\s+@",
         // GRANT / REVOKE
         r"(?i)^\s*GRANT\b",
         r"(?i)^\s*REVOKE\b",
@@ -85,6 +86,21 @@ mod tests {
     fn noop_show() {
         assert!(is_noop("SHOW TABLES"));
         assert!(is_noop("SHOW SCHEMAS IN DATABASE mydb"));
+        assert!(is_noop("SHOW STAGES"));
+    }
+
+    #[test]
+    fn noop_stage_commands() {
+        assert!(is_noop("CREATE STAGE my_stage"));
+        assert!(is_noop("CREATE OR REPLACE STAGE my_stage"));
+        assert!(is_noop("DROP STAGE my_stage"));
+        assert!(is_noop("ALTER STAGE my_stage SET COMMENT = 'test'"));
+        assert!(is_noop("PUT FILE:///tmp/data.csv @my_stage"));
+        assert!(is_noop("GET @my_stage/data.csv FILE:///tmp/"));
+        assert!(is_noop("REMOVE @my_stage/data.csv"));
+        assert!(is_noop("LIST @my_stage"));
+        assert!(is_noop("LIST @~/staged/"));
+        assert!(is_noop("COPY INTO my_table FROM @my_stage"));
     }
 
     #[test]

@@ -3838,3 +3838,402 @@ fn flatten_returns_descriptive_error() {
         "error message should say 'not supported', got: {msg}"
     );
 }
+
+// ── Internal stage operations ─────────────────────────────────────────────────
+
+/// CREATE STAGE — basic internal stage creation is a no-op (silently accepted).
+#[test]
+fn create_internal_stage() {
+    let c = conn();
+    c.execute("CREATE STAGE my_stage", &[]).unwrap();
+}
+
+/// CREATE OR REPLACE STAGE — variant with OR REPLACE is also silently ignored.
+#[test]
+fn create_or_replace_stage() {
+    let c = conn();
+    c.execute("CREATE OR REPLACE STAGE raw_data_stage", &[]).unwrap();
+}
+
+/// CREATE STAGE IF NOT EXISTS — conditional creation is silently ignored.
+#[test]
+fn create_stage_if_not_exists() {
+    let c = conn();
+    c.execute("CREATE STAGE IF NOT EXISTS my_stage", &[]).unwrap();
+    // Calling again must not error either
+    c.execute("CREATE STAGE IF NOT EXISTS my_stage", &[]).unwrap();
+}
+
+/// CREATE STAGE with FILE_FORMAT option is silently ignored.
+#[test]
+fn create_stage_with_file_format() {
+    let c = conn();
+    c.execute(
+        "CREATE OR REPLACE STAGE csv_stage
+            FILE_FORMAT = (TYPE = 'CSV' FIELD_DELIMITER = ',' SKIP_HEADER = 1)",
+        &[],
+    )
+    .unwrap();
+}
+
+/// CREATE STAGE with COPY_OPTIONS is silently ignored.
+#[test]
+fn create_stage_with_copy_options() {
+    let c = conn();
+    c.execute(
+        "CREATE STAGE load_stage
+            FILE_FORMAT = (TYPE = 'JSON')
+            COPY_OPTIONS = (ON_ERROR = 'CONTINUE')",
+        &[],
+    )
+    .unwrap();
+}
+
+/// CREATE STAGE with a COMMENT clause is silently ignored.
+#[test]
+fn create_stage_with_comment() {
+    let c = conn();
+    c.execute(
+        "CREATE STAGE events_stage COMMENT = 'Stage for raw event files'",
+        &[],
+    )
+    .unwrap();
+}
+
+/// DROP STAGE is a no-op.
+#[test]
+fn drop_stage() {
+    let c = conn();
+    c.execute("CREATE STAGE temp_stage", &[]).unwrap();
+    c.execute("DROP STAGE temp_stage", &[]).unwrap();
+}
+
+/// DROP STAGE IF EXISTS is a no-op.
+#[test]
+fn drop_stage_if_exists() {
+    let c = conn();
+    c.execute("DROP STAGE IF EXISTS nonexistent_stage", &[]).unwrap();
+}
+
+/// ALTER STAGE SET is a no-op.
+#[test]
+fn alter_stage_set_comment() {
+    let c = conn();
+    c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    c.execute(
+        "ALTER STAGE my_stage SET COMMENT = 'updated comment'",
+        &[],
+    )
+    .unwrap();
+}
+
+/// ALTER STAGE SET FILE_FORMAT is a no-op.
+#[test]
+fn alter_stage_set_file_format() {
+    let c = conn();
+    c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    c.execute(
+        "ALTER STAGE my_stage SET FILE_FORMAT = (TYPE = 'PARQUET')",
+        &[],
+    )
+    .unwrap();
+}
+
+/// SHOW STAGES is a no-op.
+#[test]
+fn show_stages() {
+    let c = conn();
+    c.execute("SHOW STAGES", &[]).unwrap();
+}
+
+/// PUT FILE — simulates uploading a local file to an internal stage; silently ignored.
+#[test]
+fn put_file_to_stage() {
+    let c = conn();
+    c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    c.execute("PUT FILE:///tmp/data.csv @my_stage", &[]).unwrap();
+}
+
+/// PUT FILE with options is silently ignored.
+#[test]
+fn put_file_with_options() {
+    let c = conn();
+    c.execute(
+        "PUT FILE:///tmp/sales_2024.csv @load_stage AUTO_COMPRESS=TRUE OVERWRITE=TRUE",
+        &[],
+    )
+    .unwrap();
+}
+
+/// PUT FILE with a directory glob is silently ignored.
+#[test]
+fn put_file_glob() {
+    let c = conn();
+    c.execute("PUT FILE:///tmp/data/*.csv @raw_stage", &[]).unwrap();
+}
+
+/// LIST @stage — lists files in a stage; silently ignored.
+#[test]
+fn list_stage() {
+    let c = conn();
+    c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    c.execute("LIST @my_stage", &[]).unwrap();
+}
+
+/// LIST @stage with a path filter is silently ignored.
+#[test]
+fn list_stage_with_path() {
+    let c = conn();
+    c.execute("LIST @my_stage/subdir/", &[]).unwrap();
+}
+
+/// LIST @~ (user stage) is silently ignored.
+#[test]
+fn list_user_stage() {
+    let c = conn();
+    c.execute("LIST @~", &[]).unwrap();
+}
+
+/// REMOVE @stage/file is silently ignored.
+#[test]
+fn remove_file_from_stage() {
+    let c = conn();
+    c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    c.execute("REMOVE @my_stage/data.csv.gz", &[]).unwrap();
+}
+
+/// REMOVE @stage with pattern is silently ignored.
+#[test]
+fn remove_stage_with_pattern() {
+    let c = conn();
+    c.execute("REMOVE @my_stage PATTERN='.*[.]csv[.]gz'", &[]).unwrap();
+}
+
+/// GET @stage — downloads a file from a stage; silently ignored.
+#[test]
+fn get_file_from_stage() {
+    let c = conn();
+    c.execute("GET @my_stage/data.csv FILE:///tmp/local/", &[]).unwrap();
+}
+
+/// COPY INTO table FROM @stage — loads staged files into a table; silently ignored
+/// (no rows are inserted because this is a testing shim, not a real Snowflake loader).
+#[test]
+fn copy_into_table_from_stage() {
+    let c = conn();
+    c.execute("CREATE TABLE sales (id INTEGER, amount REAL)", &[]).unwrap();
+    c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    c.execute("COPY INTO sales FROM @my_stage", &[]).unwrap();
+    // COPY INTO is a no-op: the table must remain empty
+    let rows = c.query("SELECT COUNT(*) FROM sales", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 0);
+}
+
+/// COPY INTO with FILE_FORMAT and ON_ERROR options is silently ignored.
+#[test]
+fn copy_into_table_from_stage_with_options() {
+    let c = conn();
+    c.execute(
+        "CREATE TABLE events (ts TEXT, event_type TEXT, payload VARIANT)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "COPY INTO events FROM @raw_stage
+            FILE_FORMAT = (TYPE = 'JSON' STRIP_OUTER_ARRAY = TRUE)
+            ON_ERROR = 'CONTINUE'",
+        &[],
+    )
+    .unwrap();
+    let rows = c.query("SELECT COUNT(*) FROM events", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 0);
+}
+
+/// COPY INTO with a specific file path inside the stage is silently ignored.
+#[test]
+fn copy_into_table_from_stage_file_path() {
+    let c = conn();
+    c.execute("CREATE TABLE orders (id INTEGER, total REAL)", &[]).unwrap();
+    c.execute(
+        "COPY INTO orders FROM @load_stage/orders/2024-01.csv",
+        &[],
+    )
+    .unwrap();
+    let rows = c.query("SELECT COUNT(*) FROM orders", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 0);
+}
+
+/// COPY INTO with column mapping is silently ignored.
+#[test]
+fn copy_into_table_with_column_mapping() {
+    let c = conn();
+    c.execute("CREATE TABLE products (sku TEXT, name TEXT, price REAL)", &[]).unwrap();
+    c.execute(
+        "COPY INTO products (sku, name, price)
+            FROM (SELECT $1, $2, $3::REAL FROM @product_stage)
+            FILE_FORMAT = (TYPE = 'CSV' SKIP_HEADER = 1)",
+        &[],
+    )
+    .unwrap();
+    let rows = c.query("SELECT COUNT(*) FROM products", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 0);
+}
+
+/// COPY INTO @stage FROM table (outbound/unloading) is silently ignored.
+#[test]
+fn copy_into_stage_from_table() {
+    let c = conn();
+    c.execute("CREATE TABLE reports (id INTEGER, summary TEXT)", &[]).unwrap();
+    c.execute(
+        "INSERT INTO reports VALUES (1, 'Q1 summary'), (2, 'Q2 summary')",
+        &[],
+    )
+    .unwrap();
+    c.execute("COPY INTO @output_stage FROM reports", &[]).unwrap();
+    // Source table data must be unaffected
+    let rows = c.query("SELECT COUNT(*) FROM reports", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 2);
+}
+
+/// COPY INTO @stage with query and format options (outbound) is silently ignored.
+#[test]
+fn copy_into_stage_from_query() {
+    let c = conn();
+    c.execute("CREATE TABLE sales (region TEXT, total REAL)", &[]).unwrap();
+    c.execute(
+        "INSERT INTO sales VALUES ('North', 1000.0), ('South', 800.0)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "COPY INTO @export_stage/sales_export.csv
+            FROM (SELECT region, total FROM sales WHERE total > 500)
+            FILE_FORMAT = (TYPE = 'CSV' HEADER = TRUE)
+            MAX_FILE_SIZE = 5000000",
+        &[],
+    )
+    .unwrap();
+    let rows = c.query("SELECT COUNT(*) FROM sales", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 2);
+}
+
+/// Complete ETL workflow: create table → create stage → PUT → COPY INTO → query.
+/// The stage operations are no-ops; table population must be done with INSERT in tests.
+#[test]
+fn complete_stage_etl_workflow() {
+    let c = conn();
+
+    // Step 1: DDL
+    c.execute(
+        "CREATE TABLE employees (
+            emp_id    INTEGER,
+            name      TEXT,
+            dept      TEXT,
+            salary    REAL
+        )",
+        &[],
+    )
+    .unwrap();
+
+    // Step 2: Simulate stage creation and file upload (no-ops)
+    c.execute("CREATE OR REPLACE STAGE hr_stage", &[]).unwrap();
+    c.execute(
+        "PUT FILE:///tmp/employees.csv @hr_stage AUTO_COMPRESS=TRUE",
+        &[],
+    )
+    .unwrap();
+
+    // Step 3: COPY INTO is a no-op (silently accepted, loads no rows).
+    // Insert rows directly to simulate the data that COPY INTO would have loaded.
+    c.execute("COPY INTO employees FROM @hr_stage FILE_FORMAT=(TYPE='CSV' SKIP_HEADER=1)", &[]).unwrap();
+    // Direct inserts represent the data that would have been staged in a real Snowflake environment.
+    c.execute("INSERT INTO employees VALUES (1, 'Alice', 'Engineering', 95000.0)", &[]).unwrap();
+    c.execute("INSERT INTO employees VALUES (2, 'Bob',   'Marketing',   72000.0)", &[]).unwrap();
+    c.execute("INSERT INTO employees VALUES (3, 'Carol', 'Engineering', 88000.0)", &[]).unwrap();
+
+    // Step 4: Analytical queries on the loaded table
+    let rows = c
+        .query(
+            "SELECT dept, COUNT(*) as headcount, AVG(salary) as avg_salary
+             FROM employees
+             GROUP BY dept
+             ORDER BY dept",
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "Engineering");
+    assert_eq!(rows[0].get::<i64>(1).unwrap(), 2);
+    let eng_avg: f64 = rows[0].get(2).unwrap();
+    assert!((eng_avg - 91500.0).abs() < 1e-6);
+
+    assert_eq!(rows[1].get::<String>(0).unwrap(), "Marketing");
+    assert_eq!(rows[1].get::<i64>(1).unwrap(), 1);
+}
+
+/// execute_batch with stage commands intermixed with DML.
+#[test]
+fn execute_batch_with_stage_commands() {
+    let c = conn();
+    c.execute_batch(
+        "
+        CREATE TABLE items (id INTEGER, label TEXT);
+        CREATE OR REPLACE STAGE items_stage;
+        PUT FILE:///tmp/items.csv @items_stage;
+        COPY INTO items FROM @items_stage FILE_FORMAT=(TYPE='CSV');
+        INSERT INTO items VALUES (1, 'alpha');
+        INSERT INTO items VALUES (2, 'beta');
+        LIST @items_stage;
+        ",
+    )
+    .unwrap();
+
+    let rows = c.query("SELECT COUNT(*) FROM items", &[]).unwrap();
+    // Only the two explicit INSERTs contribute rows (COPY INTO is a no-op)
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 2);
+}
+
+/// Multiple stage round-trip: create, upload, copy into, drop — all no-ops except DML.
+#[test]
+fn stage_round_trip_no_errors() {
+    let c = conn();
+    c.execute("CREATE TABLE log_entries (ts TEXT, level TEXT, msg TEXT)", &[]).unwrap();
+
+    // All stage operations below must succeed without errors
+    c.execute("CREATE STAGE app_logs_stage FILE_FORMAT=(TYPE='JSON')", &[]).unwrap();
+    c.execute("PUT FILE:///var/log/app.log @app_logs_stage", &[]).unwrap();
+    c.execute("LIST @app_logs_stage", &[]).unwrap();
+    c.execute(
+        "COPY INTO log_entries FROM @app_logs_stage
+            FILE_FORMAT=(TYPE='JSON' STRIP_OUTER_ARRAY=TRUE)
+            ON_ERROR='SKIP_FILE'",
+        &[],
+    )
+    .unwrap();
+    c.execute("REMOVE @app_logs_stage/app.log.gz", &[]).unwrap();
+    c.execute("DROP STAGE app_logs_stage", &[]).unwrap();
+
+    // Table should exist and be accessible (COPY INTO was a no-op → 0 rows)
+    let rows = c.query("SELECT COUNT(*) FROM log_entries", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 0);
+}
+
+/// Repeated CREATE STAGE with OR REPLACE must not cause any error.
+#[test]
+fn create_or_replace_stage_idempotent() {
+    let c = conn();
+    for _ in 0..3 {
+        c.execute("CREATE OR REPLACE STAGE idempotent_stage", &[]).unwrap();
+    }
+}
+
+/// Schema-qualified stage names are handled as no-ops.
+#[test]
+fn qualified_stage_name() {
+    let c = conn();
+    c.execute("CREATE STAGE mydb.public.my_stage", &[]).unwrap();
+    c.execute("PUT FILE:///tmp/data.csv @mydb.public.my_stage", &[]).unwrap();
+    c.execute("COPY INTO mydb.public.sales FROM @mydb.public.my_stage", &[]).unwrap();
+    c.execute("DROP STAGE mydb.public.my_stage", &[]).unwrap();
+}

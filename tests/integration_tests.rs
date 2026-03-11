@@ -3211,20 +3211,21 @@ fn three_table_inner_join_with_aggregation() {
     )
     .unwrap();
 
-    c.execute(
-        "INSERT INTO cust VALUES (1,'Alice','North'), (2,'Bob','South'), (3,'Carol','North')",
-        &[],
-    )
-    .unwrap();
-    c.execute(
-        "INSERT INTO ord VALUES (1,1,1,2), (2,1,2,1), (3,2,1,3), (4,3,2,1)",
-        &[],
-    )
-    .unwrap();
-    c.execute(
-        "INSERT INTO prod VALUES (1,'Widget',10.0), (2,'Gadget',25.0)",
-        &[],
-    )
+    c.transaction(|conn| {
+        conn.execute(
+            "INSERT INTO cust VALUES (1,'Alice','North'), (2,'Bob','South'), (3,'Carol','North')",
+            &[],
+        )?;
+        conn.execute(
+            "INSERT INTO ord VALUES (1,1,1,2), (2,1,2,1), (3,2,1,3), (4,3,2,1)",
+            &[],
+        )?;
+        conn.execute(
+            "INSERT INTO prod VALUES (1,'Widget',10.0), (2,'Gadget',25.0)",
+            &[],
+        )?;
+        Ok(())
+    })
     .unwrap();
 
     let rows = c
@@ -3301,15 +3302,17 @@ fn left_join_with_null_check_and_nvl() {
     )
     .unwrap();
 
-    c.execute(
-        "INSERT INTO acct VALUES (1,'Checking'), (2,'Savings'), (3,'Investment')",
-        &[],
-    )
-    .unwrap();
-    c.execute(
-        "INSERT INTO txn VALUES (1,1,100.0), (2,1,200.0), (3,2,50.0)",
-        &[],
-    )
+    c.transaction(|conn| {
+        conn.execute(
+            "INSERT INTO acct VALUES (1,'Checking'), (2,'Savings'), (3,'Investment')",
+            &[],
+        )?;
+        conn.execute(
+            "INSERT INTO txn VALUES (1,1,100.0), (2,1,200.0), (3,2,50.0)",
+            &[],
+        )?;
+        Ok(())
+    })
     .unwrap();
 
     let rows = c
@@ -3335,8 +3338,12 @@ fn cross_join_cartesian_product() {
     let c = conn();
     c.execute("CREATE TABLE sizes (sz TEXT)", &[]).unwrap();
     c.execute("CREATE TABLE colors (col TEXT)", &[]).unwrap();
-    c.execute("INSERT INTO sizes VALUES ('S'), ('M'), ('L')", &[]).unwrap();
-    c.execute("INSERT INTO colors VALUES ('Red'), ('Blue')", &[]).unwrap();
+    c.transaction(|conn| {
+        conn.execute("INSERT INTO sizes VALUES ('S'), ('M'), ('L')", &[])?;
+        conn.execute("INSERT INTO colors VALUES ('Red'), ('Blue')", &[])?;
+        Ok(())
+    })
+    .unwrap();
 
     let rows = c
         .query(
@@ -3366,15 +3373,17 @@ fn join_with_cte() {
     )
     .unwrap();
 
-    c.execute(
-        "INSERT INTO region VALUES (1,'APAC'), (2,'EMEA'), (3,'AMER')",
-        &[],
-    )
-    .unwrap();
-    c.execute(
-        "INSERT INTO sale VALUES (1,1,500.0),(2,1,300.0),(3,2,800.0),(4,3,200.0),(5,3,150.0)",
-        &[],
-    )
+    c.transaction(|conn| {
+        conn.execute(
+            "INSERT INTO region VALUES (1,'APAC'), (2,'EMEA'), (3,'AMER')",
+            &[],
+        )?;
+        conn.execute(
+            "INSERT INTO sale VALUES (1,1,500.0),(2,1,300.0),(3,2,800.0),(4,3,200.0),(5,3,150.0)",
+            &[],
+        )?;
+        Ok(())
+    })
     .unwrap();
 
     let rows = c
@@ -3418,15 +3427,17 @@ fn join_with_subquery_inline_view() {
     )
     .unwrap();
 
-    c.execute(
-        "INSERT INTO dept VALUES (1,'Engineering'), (2,'HR'), (3,'Finance')",
-        &[],
-    )
-    .unwrap();
-    c.execute(
-        "INSERT INTO staff VALUES (1,1,90000),(2,1,110000),(3,2,70000),(4,2,75000),(5,3,85000)",
-        &[],
-    )
+    c.transaction(|conn| {
+        conn.execute(
+            "INSERT INTO dept VALUES (1,'Engineering'), (2,'HR'), (3,'Finance')",
+            &[],
+        )?;
+        conn.execute(
+            "INSERT INTO staff VALUES (1,1,90000),(2,1,110000),(3,2,70000),(4,2,75000),(5,3,85000)",
+            &[],
+        )?;
+        Ok(())
+    })
     .unwrap();
 
     let rows = c
@@ -3464,15 +3475,17 @@ fn join_with_window_function_row_number() {
     )
     .unwrap();
 
-    c.execute(
-        "INSERT INTO cat VALUES (1,'Electronics'), (2,'Books')",
-        &[],
-    )
-    .unwrap();
-    c.execute(
-        "INSERT INTO item VALUES (1,1,95),(2,1,87),(3,1,92),(4,2,78),(5,2,85)",
-        &[],
-    )
+    c.transaction(|conn| {
+        conn.execute(
+            "INSERT INTO cat VALUES (1,'Electronics'), (2,'Books')",
+            &[],
+        )?;
+        conn.execute(
+            "INSERT INTO item VALUES (1,1,95),(2,1,87),(3,1,92),(4,2,78),(5,2,85)",
+            &[],
+        )?;
+        Ok(())
+    })
     .unwrap();
 
     let rows = c
@@ -3512,15 +3525,17 @@ fn join_with_iff_and_group_by_having() {
     )
     .unwrap();
 
-    c.execute(
-        "INSERT INTO project VALUES (1,'Alpha',1),(2,'Beta',0),(3,'Gamma',1)",
-        &[],
-    )
-    .unwrap();
-    c.execute(
-        "INSERT INTO effort VALUES (1,1,40.0),(2,1,20.0),(3,2,80.0),(4,3,15.0),(5,3,25.0)",
-        &[],
-    )
+    c.transaction(|conn| {
+        conn.execute(
+            "INSERT INTO project VALUES (1,'Alpha',1),(2,'Beta',0),(3,'Gamma',1)",
+            &[],
+        )?;
+        conn.execute(
+            "INSERT INTO effort VALUES (1,1,40.0),(2,1,20.0),(3,2,80.0),(4,3,15.0),(5,3,25.0)",
+            &[],
+        )?;
+        Ok(())
+    })
     .unwrap();
 
     let rows = c
@@ -3560,15 +3575,17 @@ fn join_with_decode_and_case() {
     )
     .unwrap();
 
-    c.execute(
-        "INSERT INTO country VALUES (1,'US'),(2,'UK'),(3,'DE')",
-        &[],
-    )
-    .unwrap();
-    c.execute(
-        "INSERT INTO order2 VALUES (1,1,100.0),(2,1,200.0),(3,2,150.0),(4,3,175.0),(5,3,175.0)",
-        &[],
-    )
+    c.transaction(|conn| {
+        conn.execute(
+            "INSERT INTO country VALUES (1,'US'),(2,'UK'),(3,'DE')",
+            &[],
+        )?;
+        conn.execute(
+            "INSERT INTO order2 VALUES (1,1,100.0),(2,1,200.0),(3,2,150.0),(4,3,175.0),(5,3,175.0)",
+            &[],
+        )?;
+        Ok(())
+    })
     .unwrap();
 
     let rows = c
@@ -3607,15 +3624,17 @@ fn join_with_fully_qualified_identifiers() {
     )
     .unwrap();
 
-    c.execute(
-        "INSERT INTO warehouse VALUES (1,'NYC'), (2,'LAX')",
-        &[],
-    )
-    .unwrap();
-    c.execute(
-        "INSERT INTO inventory VALUES (1,1,500),(2,1,300),(3,2,700)",
-        &[],
-    )
+    c.transaction(|conn| {
+        conn.execute(
+            "INSERT INTO warehouse VALUES (1,'NYC'), (2,'LAX')",
+            &[],
+        )?;
+        conn.execute(
+            "INSERT INTO inventory VALUES (1,1,500),(2,1,300),(3,2,700)",
+            &[],
+        )?;
+        Ok(())
+    })
     .unwrap();
 
     // Use three-part identifiers (db.schema.table) that should be stripped
@@ -3652,15 +3671,17 @@ fn join_with_listagg() {
     )
     .unwrap();
 
-    c.execute(
-        "INSERT INTO team VALUES (1,'Alpha'), (2,'Beta')",
-        &[],
-    )
-    .unwrap();
-    c.execute(
-        "INSERT INTO player VALUES (1,1,'Alice'),(2,1,'Bob'),(3,2,'Carol'),(4,2,'Dave'),(5,2,'Eve')",
-        &[],
-    )
+    c.transaction(|conn| {
+        conn.execute(
+            "INSERT INTO team VALUES (1,'Alpha'), (2,'Beta')",
+            &[],
+        )?;
+        conn.execute(
+            "INSERT INTO player VALUES (1,1,'Alice'),(2,1,'Bob'),(3,2,'Carol'),(4,2,'Dave'),(5,2,'Eve')",
+            &[],
+        )?;
+        Ok(())
+    })
     .unwrap();
 
     let rows = c
@@ -3696,15 +3717,17 @@ fn join_with_dateadd_and_datediff() {
     )
     .unwrap();
 
-    c.execute(
-        "INSERT INTO contract VALUES (1,'ContractA','2023-01-01'),(2,'ContractB','2023-06-01')",
-        &[],
-    )
-    .unwrap();
-    c.execute(
-        "INSERT INTO renewal VALUES (1,1,'2024-01-15'),(2,2,'2024-07-01')",
-        &[],
-    )
+    c.transaction(|conn| {
+        conn.execute(
+            "INSERT INTO contract VALUES (1,'ContractA','2023-01-01'),(2,'ContractB','2023-06-01')",
+            &[],
+        )?;
+        conn.execute(
+            "INSERT INTO renewal VALUES (1,1,'2024-01-15'),(2,2,'2024-07-01')",
+            &[],
+        )?;
+        Ok(())
+    })
     .unwrap();
 
     let rows = c
@@ -3746,17 +3769,19 @@ fn multi_cte_join_with_running_window() {
     )
     .unwrap();
 
-    c.execute(
-        "INSERT INTO region2 VALUES (1,'East'),(2,'West')",
-        &[],
-    )
-    .unwrap();
-    c.execute(
-        "INSERT INTO monthly_sale VALUES
+    c.transaction(|conn| {
+        conn.execute(
+            "INSERT INTO region2 VALUES (1,'East'),(2,'West')",
+            &[],
+        )?;
+        conn.execute(
+            "INSERT INTO monthly_sale VALUES
             (1,1,1,100.0),(2,1,2,150.0),(3,1,3,200.0),
             (4,2,1,80.0),(5,2,2,120.0),(6,2,3,160.0)",
-        &[],
-    )
+            &[],
+        )?;
+        Ok(())
+    })
     .unwrap();
 
     let rows = c

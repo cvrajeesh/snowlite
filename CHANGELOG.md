@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/cvrajeesh/snowlite/compare/v0.2.2...v0.2.3) - 2026-03-11
+
+### Added
+
+- internal stage improvements ([#37](https://github.com/cvrajeesh/snowlite/pull/37))
+
+### Fixed
+
+- resolve math functions, date functions, TRY_CAST, and LAG/LEAD type issues ([#42](https://github.com/cvrajeesh/snowlite/pull/42))
+
+### Other
+
+- add complex Snowflake join integration tests ([#35](https://github.com/cvrajeesh/snowlite/pull/35))
+
 ## [0.2.2](https://github.com/cvrajeesh/snowlite/compare/v0.2.1...v0.2.2) - 2026-03-10
 
 ### Fixed

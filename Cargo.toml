@@ -1,6 +1,6 @@
 [package]
 name = "snowlite"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 description = "Local SQLite-backed driver that acts as an in-place replacement for Snowflake in integration tests"
 license = "MIT"

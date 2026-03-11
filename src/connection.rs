@@ -3,8 +3,12 @@
 //! [`Connection`] wraps a `rusqlite::Connection` and intercepts every SQL
 //! statement, passing it through the [`Translator`] before execution.
 
-use std::path::Path;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
+use once_cell::sync::Lazy;
+use regex::Regex;
 use rusqlite::types::ValueRef;
 
 use crate::error::Error;
@@ -17,6 +21,10 @@ use crate::{Result, Value};
 pub struct Config {
     /// Translator configuration — controls how Snowflake SQL is rewritten.
     pub translator: TranslatorConfig,
+    /// When `true`, `PUT FILE` tracks the local file path so that a subsequent
+    /// `COPY INTO table FROM @stage` can actually read the CSV file and insert
+    /// its rows.  Disabled by default so that existing no-op tests are unaffected.
+    pub load_staged_files: bool,
 }
 
 impl Config {
@@ -36,6 +44,19 @@ impl Config {
         self.translator.drop_before_create = true;
         self
     }
+
+    /// Enable real CSV file loading for staged files.
+    ///
+    /// When active, `PUT FILE:///path @stage` records the local path, and a
+    /// subsequent `COPY INTO table FROM @stage FILE_FORMAT=(TYPE='CSV')` reads
+    /// the file and inserts its rows into the table via SQLite.
+    ///
+    /// Without this option (the default) both commands remain silent no-ops,
+    /// which is what most existing tests expect.
+    pub fn with_stage_loading(mut self) -> Self {
+        self.load_staged_files = true;
+        self
+    }
 }
 
 /// A connection to a local SQLite database that understands Snowflake SQL.
@@ -50,6 +71,11 @@ impl Config {
 pub struct Connection {
     inner: rusqlite::Connection,
     translator: Translator,
+    /// Whether real CSV file staging is enabled (see [`Config::with_stage_loading`]).
+    stage_loading: bool,
+    /// Tracks files staged via `PUT FILE` when [`stage_loading`] is `true`.
+    /// Maps normalised stage name → ordered list of local [`PathBuf`]s.
+    staged_files: RefCell<HashMap<String, Vec<PathBuf>>>,
 }
 
 impl Connection {
@@ -95,6 +121,16 @@ impl Connection {
     /// # }
     /// ```
     pub fn execute(&self, sql: &str, params: &[&dyn rusqlite::types::ToSql]) -> Result<usize> {
+        // When stage loading is enabled, intercept PUT FILE and COPY INTO before
+        // the regular translator so that staged CSV files are actually loaded.
+        if self.stage_loading {
+            if let Some(result) = self.try_stage_put_file(sql) {
+                return result;
+            }
+            if let Some(result) = self.try_copy_into_from_stage(sql) {
+                return result;
+            }
+        }
         match self.translator.translate(sql)? {
             None => Ok(0), // no-op
             Some(translated) => {
@@ -224,7 +260,201 @@ impl Connection {
         Ok(Connection {
             inner,
             translator: Translator::with_config(config.translator),
+            stage_loading: config.load_staged_files,
+            staged_files: RefCell::new(HashMap::new()),
         })
+    }
+
+    // ── Stage file loading ───────────────────────────────────────────────────
+
+    /// If `sql` is a `PUT FILE` statement, record the local path under the
+    /// stage name and return `Ok(0)`.  Returns `None` if the statement does not
+    /// match the `PUT FILE` pattern.
+    fn try_stage_put_file(&self, sql: &str) -> Option<Result<usize>> {
+        static RE: Lazy<Regex> = Lazy::new(|| {
+            // PUT FILE:///local/path @stage_name [options]
+            Regex::new(r"(?i)^\s*PUT\s+FILE://([^\s]+)\s+@([\w./]+)").unwrap()
+        });
+        let caps = RE.captures(sql.trim())?;
+        let file_path = PathBuf::from(caps.get(1)?.as_str());
+        // Only track files that actually exist so that fake paths in existing
+        // no-op tests do not accidentally get staged.
+        if !file_path.exists() {
+            return Some(Ok(0));
+        }
+        let stage_name = normalize_stage_name(caps.get(2)?.as_str());
+        self.staged_files.borrow_mut().entry(stage_name).or_default().push(file_path);
+        Some(Ok(0))
+    }
+
+    /// If `sql` is an inbound `COPY INTO table FROM @stage` statement **and**
+    /// that stage has files tracked by a prior `PUT FILE`, load those CSV files
+    /// into the table and return the number of rows inserted.
+    ///
+    /// Returns `None` if the pattern does not match or no staged files exist,
+    /// allowing the call to fall through to the regular no-op translator.
+    fn try_copy_into_from_stage(&self, sql: &str) -> Option<Result<usize>> {
+        static RE: Lazy<Regex> = Lazy::new(|| {
+            // Inbound: COPY INTO table FROM @stage [options]
+            // Does NOT match outbound COPY INTO @stage FROM table because the
+            // first captured group requires word characters (no leading @).
+            Regex::new(r"(?i)^\s*COPY\s+INTO\s+([\w.]+)\s+FROM\s+@([\w./]+)").unwrap()
+        });
+        let caps = RE.captures(sql.trim())?;
+        let table_raw = caps.get(1)?.as_str();
+        let stage_ref = caps.get(2)?.as_str();
+
+        // Strip schema prefix from table name — use the last dotted component.
+        let table = table_raw.split('.').last().unwrap_or(table_raw);
+        let stage_name = normalize_stage_name(stage_ref);
+
+        // Only proceed when this stage actually has tracked files.
+        let files = {
+            let map = self.staged_files.borrow();
+            map.get(&stage_name).cloned()?
+        };
+
+        // Skip non-CSV formats so that staged files with e.g. TYPE='JSON' remain
+        // no-ops and do not cause unexpected row insertions.
+        if !is_csv_format(sql) {
+            return Some(Ok(0));
+        }
+
+        let skip_header = parse_skip_header(sql);
+        let mut total = 0usize;
+        for path in &files {
+            match load_csv_into_table(&self.inner, table, path, skip_header) {
+                Ok(n) => total += n,
+                Err(e) => return Some(Err(e)),
+            }
+        }
+        Some(Ok(total))
+    }
+}
+
+// ── Stage file loading helpers ───────────────────────────────────────────────
+
+/// Normalise a stage reference to a lookup key: strip any path suffix after
+/// the first `/` and convert to lower-case.
+///
+/// Examples:
+/// - `"my_stage"` → `"my_stage"`
+/// - `"My_Stage/path/prefix"` → `"my_stage"`
+/// - `"mydb.public.my_stage"` → `"mydb.public.my_stage"`
+fn normalize_stage_name(stage_ref: &str) -> String {
+    stage_ref.split('/').next().unwrap_or(stage_ref).to_lowercase()
+}
+
+/// Load rows from a CSV `file` into `table`.
+///
+/// `skip_header` specifies how many leading lines to discard (usually 0 or 1).
+/// All field values are passed as `TEXT`; SQLite's type-affinity rules coerce
+/// them to `INTEGER` / `REAL` as needed.  Non-existent files are silently
+/// skipped (returns `Ok(0)`) so that fake paths in no-op tests are harmless.
+fn load_csv_into_table(
+    conn: &rusqlite::Connection,
+    table: &str,
+    file: &Path,
+    skip_header: usize,
+) -> Result<usize> {
+    use std::io::{BufRead, BufReader};
+
+    if !file.exists() {
+        return Ok(0);
+    }
+
+    let reader = BufReader::new(std::fs::File::open(file)?);
+    let lines: Vec<String> = reader.lines().collect::<std::io::Result<_>>()?;
+
+    let data: Vec<&str> = lines.iter().skip(skip_header).map(String::as_str).collect();
+    if data.is_empty() {
+        return Ok(0);
+    }
+
+    // Parse the first data row once to determine the expected column count,
+    // then reuse the parsed values for the first INSERT.
+    let first_row = parse_csv_row(data[0]);
+    let col_count = first_row.len();
+    if col_count == 0 {
+        return Ok(0);
+    }
+
+    let placeholders = std::iter::repeat("?").take(col_count).collect::<Vec<_>>().join(", ");
+    let insert_sql = format!("INSERT INTO {table} VALUES ({placeholders})");
+    let mut stmt = conn.prepare(&insert_sql)?;
+
+    let mut count = 0usize;
+    for (i, line) in data.iter().enumerate() {
+        // Reuse the already-parsed first row; parse remaining rows on demand.
+        let values = if i == 0 { first_row.clone() } else { parse_csv_row(line) };
+        if values.iter().all(|v| v.is_empty()) && line.trim().is_empty() {
+            continue;
+        }
+        // Pad short rows with NULL; truncate over-long rows.
+        let row: Vec<rusqlite::types::Value> = (0..col_count)
+            .map(|i| match values.get(i) {
+                Some(v) if !v.is_empty() => rusqlite::types::Value::Text(v.clone()),
+                _ => rusqlite::types::Value::Null,
+            })
+            .collect();
+        let refs: Vec<&dyn rusqlite::types::ToSql> =
+            row.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
+        stmt.execute(refs.as_slice())?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// Parse a single CSV line into a `Vec<String>`, respecting RFC 4180 quoting:
+/// fields may be enclosed in `"…"`, and a literal `"` inside quotes is
+/// represented as `""`.
+fn parse_csv_row(line: &str) -> Vec<String> {
+    let line = line.trim_end_matches('\r');
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if !in_quotes => in_quotes = true,
+            '"' if in_quotes => {
+                if chars.peek() == Some(&'"') {
+                    chars.next(); // consume escaped double-quote
+                    field.push('"');
+                } else {
+                    in_quotes = false;
+                }
+            }
+            ',' if !in_quotes => {
+                fields.push(std::mem::take(&mut field));
+            }
+            _ => field.push(c),
+        }
+    }
+    fields.push(field);
+    fields
+}
+
+/// Extract the `SKIP_HEADER = n` value from a `COPY INTO` SQL string.
+/// Returns `0` if the option is absent.
+fn parse_skip_header(sql: &str) -> usize {
+    static RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)SKIP_HEADER\s*=\s*(\d+)").unwrap());
+    RE.captures(sql)
+        .and_then(|c| c.get(1))
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Returns `true` when the `COPY INTO` SQL either specifies `TYPE = 'CSV'`
+/// explicitly, or omits the `TYPE` option entirely (default assumption: CSV).
+/// Returns `false` for any other explicit format such as JSON, PARQUET, etc.
+fn is_csv_format(sql: &str) -> bool {
+    static RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)TYPE\s*=\s*'([^']+)'").unwrap());
+    match RE.captures(sql).and_then(|c| c.get(1)) {
+        None => true,
+        Some(m) => m.as_str().eq_ignore_ascii_case("CSV"),
     }
 }
 

@@ -3841,6 +3841,14 @@ fn flatten_returns_descriptive_error() {
 
 // ── Internal stage operations ─────────────────────────────────────────────────
 
+/// Helper: open an in-memory connection with real CSV stage-loading enabled.
+fn conn_with_stage_loading() -> snowlite::Connection {
+    snowlite::Connection::open_in_memory_with_config(
+        snowlite::Config::new().with_stage_loading(),
+    )
+    .expect("open in-memory db with stage loading")
+}
+
 /// Helper: count user-created tables in the SQLite schema.
 fn table_count(c: &snowlite::Connection) -> i64 {
     c.query(
@@ -4355,4 +4363,162 @@ fn qualified_stage_name() {
     let e = c.execute("DROP STAGE mydb.public.my_stage", &[]).unwrap();
     assert_eq!(e, 0, "DROP STAGE with qualified name should affect 0 rows");
     assert_eq!(table_count(&c), 0, "qualified stage commands must not create any SQLite tables");
+}
+
+// ── Real-file stage loading (Config::with_stage_loading) ─────────────────────
+
+/// PUT FILE then COPY INTO with a real CSV file that has a header row.
+///
+/// Verifies that `conn_with_stage_loading()` (which enables `Config::with_stage_loading`)
+/// actually reads the staged CSV file and inserts one row per data line.
+#[test]
+fn copy_into_loads_rows_from_real_csv_file() {
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // Create a temporary CSV file with three data rows and a header.
+    let mut tmp = NamedTempFile::new().unwrap();
+    writeln!(tmp, "id,name,amount").unwrap();
+    writeln!(tmp, "1,Alice,100.50").unwrap();
+    writeln!(tmp, "2,Bob,200.00").unwrap();
+    writeln!(tmp, "3,Charlie,300.75").unwrap();
+    tmp.flush().unwrap();
+
+    let c = conn_with_stage_loading();
+    c.execute("CREATE TABLE sales (id INTEGER, name TEXT, amount REAL)", &[]).unwrap();
+
+    // Stage the file.
+    let path = tmp.path().to_str().unwrap();
+    let put_affected = c.execute(&format!("PUT FILE://{path} @sales_stage"), &[]).unwrap();
+    assert_eq!(put_affected, 0, "PUT FILE should return 0 rows affected");
+
+    // Load it — SKIP_HEADER=1 discards the header row.
+    let copy_affected = c
+        .execute(
+            "COPY INTO sales FROM @sales_stage FILE_FORMAT = (TYPE = 'CSV' SKIP_HEADER = 1)",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(copy_affected, 3, "COPY INTO should have loaded 3 rows from the CSV file");
+
+    // Verify total row count.
+    let rows = c.query("SELECT COUNT(*) FROM sales", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 3);
+
+    // Verify actual row values by reading them back in order.
+    let rows = c.query("SELECT id, name, amount FROM sales ORDER BY id", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 1);
+    assert_eq!(rows[0].get::<String>(1).unwrap(), "Alice");
+    assert_eq!(rows[1].get::<i64>(0).unwrap(), 2);
+    assert_eq!(rows[1].get::<String>(1).unwrap(), "Bob");
+    assert_eq!(rows[2].get::<i64>(0).unwrap(), 3);
+    assert_eq!(rows[2].get::<String>(1).unwrap(), "Charlie");
+}
+
+/// PUT FILE then COPY INTO without a header row (no SKIP_HEADER option).
+///
+/// Verifies that all lines are treated as data rows when SKIP_HEADER is absent.
+#[test]
+fn copy_into_loads_rows_from_real_csv_no_header() {
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // Create a temporary CSV file with no header — all lines are data.
+    let mut tmp = NamedTempFile::new().unwrap();
+    writeln!(tmp, "10,Widget,9.99").unwrap();
+    writeln!(tmp, "20,Gadget,19.99").unwrap();
+    tmp.flush().unwrap();
+
+    let c = conn_with_stage_loading();
+    c.execute("CREATE TABLE products (sku INTEGER, name TEXT, price REAL)", &[]).unwrap();
+
+    let path = tmp.path().to_str().unwrap();
+    c.execute(&format!("PUT FILE://{path} @prod_stage"), &[]).unwrap();
+
+    let affected = c
+        .execute("COPY INTO products FROM @prod_stage FILE_FORMAT = (TYPE = 'CSV')", &[])
+        .unwrap();
+    assert_eq!(affected, 2, "COPY INTO should have loaded 2 rows");
+
+    let rows = c.query("SELECT COUNT(*) FROM products", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 2);
+
+    let rows = c.query("SELECT sku, name FROM products ORDER BY sku", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 10);
+    assert_eq!(rows[0].get::<String>(1).unwrap(), "Widget");
+    assert_eq!(rows[1].get::<i64>(0).unwrap(), 20);
+    assert_eq!(rows[1].get::<String>(1).unwrap(), "Gadget");
+}
+
+/// Stage multiple files to the same stage, then load them all with one COPY INTO.
+///
+/// Verifies that all rows from all staged files are inserted.
+#[test]
+fn copy_into_loads_rows_from_multiple_staged_files() {
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    let mut tmp1 = NamedTempFile::new().unwrap();
+    writeln!(tmp1, "id,region,revenue").unwrap();
+    writeln!(tmp1, "1,North,5000.0").unwrap();
+    writeln!(tmp1, "2,South,3000.0").unwrap();
+    tmp1.flush().unwrap();
+
+    let mut tmp2 = NamedTempFile::new().unwrap();
+    writeln!(tmp2, "id,region,revenue").unwrap();
+    writeln!(tmp2, "3,East,4000.0").unwrap();
+    writeln!(tmp2, "4,West,6000.0").unwrap();
+    tmp2.flush().unwrap();
+
+    let c = conn_with_stage_loading();
+    c.execute("CREATE TABLE sales_by_region (id INTEGER, region TEXT, revenue REAL)", &[])
+        .unwrap();
+
+    let path1 = tmp1.path().to_str().unwrap();
+    let path2 = tmp2.path().to_str().unwrap();
+    c.execute(&format!("PUT FILE://{path1} @region_stage"), &[]).unwrap();
+    c.execute(&format!("PUT FILE://{path2} @region_stage"), &[]).unwrap();
+
+    let affected = c
+        .execute(
+            "COPY INTO sales_by_region FROM @region_stage \
+             FILE_FORMAT = (TYPE = 'CSV' SKIP_HEADER = 1)",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(affected, 4, "COPY INTO should have loaded 4 rows (2 from each file)");
+
+    let rows = c.query("SELECT COUNT(*) FROM sales_by_region", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 4);
+}
+
+/// Quoted fields containing commas must be parsed as a single column value.
+#[test]
+fn copy_into_csv_with_quoted_fields() {
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    let mut tmp = NamedTempFile::new().unwrap();
+    writeln!(tmp, "id,full_name,notes").unwrap();
+    writeln!(tmp, r#"1,"Smith, John","Manager, Senior""#).unwrap();
+    writeln!(tmp, r#"2,"Doe, Jane","Engineer, Principal""#).unwrap();
+    tmp.flush().unwrap();
+
+    let c = conn_with_stage_loading();
+    c.execute("CREATE TABLE employees (id INTEGER, full_name TEXT, notes TEXT)", &[]).unwrap();
+
+    let path = tmp.path().to_str().unwrap();
+    c.execute(&format!("PUT FILE://{path} @emp_stage"), &[]).unwrap();
+
+    let affected = c
+        .execute(
+            "COPY INTO employees FROM @emp_stage FILE_FORMAT = (TYPE = 'CSV' SKIP_HEADER = 1)",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(affected, 2);
+
+    let rows = c.query("SELECT id, full_name FROM employees ORDER BY id", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(1).unwrap(), "Smith, John");
+    assert_eq!(rows[1].get::<String>(1).unwrap(), "Doe, Jane");
 }

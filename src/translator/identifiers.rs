@@ -14,6 +14,10 @@ use regex::Regex;
 /// When `use_schema_prefix` is `true`, two-part identifiers become
 /// `schema__table` so that same-named tables in different schemas don't
 /// collide.
+///
+/// String literals (single-quoted) and double-quoted identifiers are preserved
+/// verbatim so that paths like `'a.b'` inside function arguments are not
+/// corrupted.
 pub fn strip_qualifiers(sql: &str, use_schema_prefix: bool) -> String {
     // Match: optional "db". optional "schema". table
     // Each part may be quoted with double-quotes.
@@ -30,28 +34,81 @@ pub fn strip_qualifiers(sql: &str, use_schema_prefix: bool) -> String {
         .expect("valid two-part identifier regex")
     });
 
-    // Strip three-part qualifiers first
-    let sql = RE_THREE_PART.replace_all(sql, "$1").into_owned();
+    // Apply regex substitutions only to segments of SQL that are outside
+    // single-quoted string literals, preventing dotted paths like 'a.b' inside
+    // function call arguments from being incorrectly stripped.
+    apply_outside_literals(sql, |segment| {
+        // Strip three-part qualifiers first
+        let s = RE_THREE_PART.replace_all(segment, "$1").into_owned();
 
-    if use_schema_prefix {
-        // Keep schema, join with double-underscore
-        RE_TWO_PART
-            .replace_all(&sql, |caps: &regex::Captures| {
-                let schema = caps[1].trim_matches('"');
-                let table = caps[2].trim_matches('"');
-                // Ensure the trimmed parts only contain valid identifier characters
-                let sanitize = |s: &str| -> String {
-                    s.chars()
-                        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
-                        .collect()
-                };
-                format!("{}__{}", sanitize(schema), sanitize(table))
-            })
-            .into_owned()
-    } else {
-        // Drop schema entirely
-        RE_TWO_PART.replace_all(&sql, "$2").into_owned()
+        if use_schema_prefix {
+            RE_TWO_PART
+                .replace_all(&s, |caps: &regex::Captures| {
+                    let schema = caps[1].trim_matches('"');
+                    let table = caps[2].trim_matches('"');
+                    let sanitize = |s: &str| -> String {
+                        s.chars()
+                            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
+                            .collect()
+                    };
+                    format!("{}__{}", sanitize(schema), sanitize(table))
+                })
+                .into_owned()
+        } else {
+            RE_TWO_PART.replace_all(&s, "$2").into_owned()
+        }
+    })
+}
+
+/// Apply a transformation function to all segments of `sql` that are **outside**
+/// single-quoted string literals.  Single-quoted segments are copied through
+/// unchanged.  Double-quoted identifiers are treated as non-literal SQL and
+/// ARE passed through the transform.
+fn apply_outside_literals(sql: &str, mut transform: impl FnMut(&str) -> String) -> String {
+    let mut result = String::with_capacity(sql.len());
+    let mut chars = sql.char_indices().peekable();
+    let mut segment_start = 0;
+
+    while let Some((i, ch)) = chars.next() {
+        if ch == '\'' {
+            // Flush the non-literal segment accumulated so far
+            if i > segment_start {
+                result.push_str(&transform(&sql[segment_start..i]));
+            }
+            // Copy the single-quoted literal verbatim (handle escaped '' too)
+            result.push('\'');
+            let mut literal_end = i + 1;
+            loop {
+                match chars.next() {
+                    None => break,
+                    Some((j, '\'')) => {
+                        result.push('\'');
+                        literal_end = j + 1;
+                        // Check for escaped '' (two consecutive single quotes)
+                        if chars.peek().map(|(_, c)| *c) == Some('\'') {
+                            chars.next();
+                            result.push('\'');
+                            literal_end += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    Some((_, c)) => {
+                        result.push(c);
+                        literal_end += c.len_utf8();
+                    }
+                }
+            }
+            segment_start = literal_end;
+        }
     }
+
+    // Flush any remaining non-literal segment
+    if segment_start < sql.len() {
+        result.push_str(&transform(&sql[segment_start..]));
+    }
+
+    result
 }
 
 #[cfg(test)]

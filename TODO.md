@@ -75,7 +75,7 @@ unchanged — but this is **untested** end-to-end.
 - [x] `CREATE TRANSIENT TABLE` — simple rule strips `TRANSIENT`; integration test added
 - [x] `ALTER TABLE ... ADD COLUMN` — passes through; integration test added
 - [x] `ALTER TABLE ... RENAME COLUMN old TO new` — passes through (SQLite 3.25+); integration test added
-- [ ] `ALTER TABLE ... DROP COLUMN` — passes through (SQLite 3.35+); add test
+- [x] `ALTER TABLE ... DROP COLUMN` — passes through (SQLite 3.35+); integration test added
 - [x] `CREATE DATABASE` / `DROP DATABASE` — added to noop list; integration tests added
 - [x] `ANALYZE` — added to noop list; integration test added
 
@@ -83,7 +83,7 @@ unchanged — but this is **untested** end-to-end.
 - [x] `::` cast operator (e.g. `val::INTEGER`) — regex rewrite to `CAST(val AS INTEGER)`; integration tests added
 
 ### Statements (no-op list — `src/translator/noop.rs`)
-- [x] `MERGE INTO … USING … WHEN MATCHED` — added to no-op list; integration test added
+- [x] `MERGE INTO … USING … WHEN MATCHED` — returns descriptive Translation error; integration test added
 
 ---
 
@@ -110,11 +110,11 @@ unchanged — but this is **untested** end-to-end.
 - [x] Remove unused `chrono` dependency from `Cargo.toml`
 - [x] Fix `SELECT TOP N ... ORDER BY col` rewrite — verified correct (LIMIT appended after ORDER BY); integration test added to document behaviour
 - [ ] Add fuzz testing for translator regex patterns (prevent ReDoS on adversarial SQL)
-- [ ] Add query timeout / statement size limits in `src/connection.rs`
+- [x] Add statement size limits in `src/connection.rs` (1 MiB cap, `MAX_STATEMENT_BYTES`); integration test added
 
 ### Bug Fixes (known incorrect behaviour)
 - [x] `LPAD`/`RPAD` with empty pad string — now raises an error matching Snowflake behaviour (`src/connection.rs`); integration tests added
-- [ ] `get_path(col, 'a.b')` multi-segment paths — identifier stripper corrupts dotted paths; fix by protecting string literal arguments in the identifier stripper (`src/translator/identifiers.rs`)
+- [x] `get_path(col, 'a.b')` multi-segment paths — fixed by `apply_outside_literals` in identifier stripper; protects single-quoted string literal arguments (`src/translator/identifiers.rs`); integration test added
 - [x] Decimal precision — `NUMBER(p, s)` stored as SQLite `REAL` (64-bit float); integration test added documenting the precision limit
 - [x] String collation — `COLLATE` clauses are stripped; integration test added documenting case-sensitivity difference from Snowflake
 - [x] Recursive CTEs — integration test added documenting SQLite's recursion depth behaviour
@@ -122,7 +122,7 @@ unchanged — but this is **untested** end-to-end.
 ### Unsupported (document-only, no fix possible in SQLite)
 - [ ] `CONVERT_TIMEZONE` — document workaround clearly in limitations.md (already done)
 - [ ] `FLATTEN` / lateral joins — document workaround clearly in limitations.md (already done)
-- [ ] `MERGE INTO` — emit a descriptive error rather than a cryptic SQLite parse error
+- [x] `MERGE INTO` — emits a descriptive Translation error rather than a cryptic SQLite parse error; integration test added
 
 ---
 

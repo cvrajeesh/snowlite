@@ -53,6 +53,9 @@ impl Translator {
         static FLATTEN_RE: Lazy<Regex> = Lazy::new(|| {
             Regex::new(r"(?i)\bFLATTEN\s*\(").expect("valid FLATTEN regex")
         });
+        static MERGE_RE: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r"(?i)^\s*MERGE\s+INTO\b").expect("valid MERGE INTO regex")
+        });
 
         let trimmed = sql.trim();
         if noop::is_noop(trimmed) {
@@ -67,6 +70,14 @@ impl Translator {
             ));
         }
 
+        if MERGE_RE.is_match(trimmed) {
+            return Err(Error::translation(
+                "MERGE INTO is not supported: SQLite has no native MERGE statement. \
+                 Rewrite using INSERT OR REPLACE, INSERT OR IGNORE, or separate \
+                 UPDATE/INSERT statements.",
+            ));
+        }
+
         let mut out = trimmed.to_owned();
 
         // 1. Rewrite CREATE OR REPLACE — do before type rewriting so we don't
@@ -77,7 +88,12 @@ impl Translator {
             out = functions::rewrite_create_or_replace(&out);
         }
 
-        // 2. Strip fully-qualified identifiers
+        // 2a. Rewrite semi-structured colon-paths (data:field.sub) BEFORE identifier
+        //     stripping so that the dotted suffix (field.sub) is not mistakenly
+        //     treated as a qualified identifier and stripped.
+        out = functions::rewrite_semi_structured_paths(&out);
+
+        // 2b. Strip fully-qualified identifiers
         out = identifiers::strip_qualifiers(&out, self.config.use_schema_prefix);
 
         // 3. Rewrite Snowflake type names to SQLite affinities (DDL only)

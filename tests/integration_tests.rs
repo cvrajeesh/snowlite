@@ -2901,18 +2901,20 @@ fn analyze_is_noop() {
     c.execute("ANALYZE", &[]).unwrap();
 }
 
-// ── Priority 2: MERGE INTO (no-op) ───────────────────────────────────────────
+// ── Priority 2: MERGE INTO (descriptive error) ────────────────────────────────
 
 #[test]
 fn merge_into_is_noop() {
     let c = conn();
     c.execute("CREATE TABLE t (id INTEGER, val TEXT)", &[]).unwrap();
-    // MERGE INTO is a no-op — SQLite does not support it
-    c.execute(
-        "MERGE INTO t USING src ON t.id = src.id WHEN MATCHED THEN UPDATE SET t.val = src.val",
-        &[],
-    )
-    .unwrap();
+    // MERGE INTO now returns a descriptive Translation error (not a silent no-op)
+    let err = c
+        .execute(
+            "MERGE INTO t USING src ON t.id = src.id WHEN MATCHED THEN UPDATE SET t.val = src.val",
+            &[],
+        )
+        .unwrap_err();
+    assert!(err.to_string().to_lowercase().contains("merge"));
 }
 
 // ── Priority 3: Math Functions ────────────────────────────────────────────────
@@ -4517,4 +4519,72 @@ fn copy_into_csv_with_quoted_fields() {
     let rows = c.query("SELECT id, full_name FROM employees ORDER BY id", &[]).unwrap();
     assert_eq!(rows[0].get::<String>(1).unwrap(), "Smith, John");
     assert_eq!(rows[1].get::<String>(1).unwrap(), "Doe, Jane");
+}
+
+// ── TODO items ────────────────────────────────────────────────────────────────
+
+#[test]
+fn alter_table_drop_column() {
+    let c = conn();
+    c.execute("CREATE TABLE t (id INTEGER, name TEXT, age INTEGER)", &[]).unwrap();
+    c.execute("INSERT INTO t VALUES (1, 'Alice', 30)", &[]).unwrap();
+    c.execute("ALTER TABLE t DROP COLUMN age", &[]).unwrap();
+    let rows = c.query("SELECT * FROM t", &[]).unwrap();
+    assert_eq!(rows[0].column_count(), 2);
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 1);
+    assert_eq!(rows[0].get::<String>(1).unwrap(), "Alice");
+}
+
+#[test]
+fn merge_into_returns_descriptive_error() {
+    let c = conn();
+    let err = c
+        .execute(
+            "MERGE INTO target USING source ON target.id = source.id \
+             WHEN MATCHED THEN UPDATE SET val = source.val",
+            &[],
+        )
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.to_lowercase().contains("merge"),
+        "error should mention MERGE, got: {msg}"
+    );
+}
+
+#[test]
+fn get_path_multi_segment_string_literal() {
+    let c = conn();
+    let rows = c
+        .query("SELECT get_path('{\"a\": {\"b\": 42}}', 'a.b')", &[])
+        .unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "42");
+}
+
+#[test]
+fn semi_structured_nested_colon_path_fixed() {
+    let c = conn();
+    c.execute("CREATE TABLE events (data VARIANT)", &[]).unwrap();
+    c.execute(
+        "INSERT INTO events VALUES (?)",
+        &[&r#"{"user": {"name": "Alice", "id": 42}}"#],
+    )
+    .unwrap();
+    let rows = c.query("SELECT data:user.name FROM events", &[]).unwrap();
+    let name: String = rows[0].get(0).unwrap();
+    assert_eq!(name, "Alice");
+}
+
+#[test]
+fn statement_size_limit_rejected() {
+    let c = conn();
+    // A statement of 2 MB should be rejected before hitting SQLite
+    let huge_sql = format!("SELECT '{}'", "x".repeat(2 * 1024 * 1024));
+    let err = c.query(&huge_sql, &[]).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.to_lowercase().contains("too large") || msg.to_lowercase().contains("size"),
+        "error should mention size, got: {msg}"
+    );
 }

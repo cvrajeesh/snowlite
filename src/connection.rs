@@ -16,6 +16,10 @@ use crate::row::Row;
 use crate::translator::rewriter::{Translator, TranslatorConfig};
 use crate::{Result, Value};
 
+/// Maximum SQL statement size (1 MB). Statements larger than this are rejected
+/// before translation to prevent excessive memory use or ReDoS on crafted input.
+const MAX_STATEMENT_BYTES: usize = 1024 * 1024;
+
 /// Connection configuration.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
@@ -121,6 +125,13 @@ impl Connection {
     /// # }
     /// ```
     pub fn execute(&self, sql: &str, params: &[&dyn rusqlite::types::ToSql]) -> Result<usize> {
+        if sql.len() > MAX_STATEMENT_BYTES {
+            return Err(Error::translation(format!(
+                "Statement too large: {} bytes exceeds the {} byte limit",
+                sql.len(),
+                MAX_STATEMENT_BYTES
+            )));
+        }
         // When stage loading is enabled, intercept PUT FILE and COPY INTO before
         // the regular translator so that staged CSV files are actually loaded.
         if self.stage_loading {
@@ -168,6 +179,13 @@ impl Connection {
         sql: &str,
         params: &[&dyn rusqlite::types::ToSql],
     ) -> Result<Vec<Row>> {
+        if sql.len() > MAX_STATEMENT_BYTES {
+            return Err(Error::translation(format!(
+                "Statement too large: {} bytes exceeds the {} byte limit",
+                sql.len(),
+                MAX_STATEMENT_BYTES
+            )));
+        }
         let translated = match self.translator.translate(sql)? {
             None => return Ok(vec![]),
             Some(t) => t,

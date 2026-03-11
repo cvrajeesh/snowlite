@@ -3189,6 +3189,606 @@ fn recursive_cte_depth() {
     assert_eq!(count, 10);
 }
 
+// ── Complex join queries ──────────────────────────────────────────────────────
+
+#[test]
+fn three_table_inner_join_with_aggregation() {
+    // Simulates a common Snowflake analytics pattern: customers → orders → products
+    let c = conn();
+    c.execute(
+        "CREATE TABLE cust (cust_id INTEGER, cust_name TEXT, cust_region TEXT)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "CREATE TABLE ord (ord_id INTEGER, ord_cust_id INTEGER, ord_prod_id INTEGER, ord_qty INTEGER)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "CREATE TABLE prod (prod_id INTEGER, prod_name TEXT, prod_price REAL)",
+        &[],
+    )
+    .unwrap();
+
+    c.execute(
+        "INSERT INTO cust VALUES (1,'Alice','North'), (2,'Bob','South'), (3,'Carol','North')",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO ord VALUES (1,1,1,2), (2,1,2,1), (3,2,1,3), (4,3,2,1)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO prod VALUES (1,'Widget',10.0), (2,'Gadget',25.0)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT cust_name, SUM(ord_qty * prod_price) AS revenue
+             FROM cust
+             INNER JOIN ord  ON cust_id  = ord_cust_id
+             INNER JOIN prod ON prod_id  = ord_prod_id
+             GROUP BY cust_id, cust_name
+             ORDER BY revenue DESC",
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(rows.len(), 3);
+    // Alice: 2*10 + 1*25 = 45, Bob: 3*10 = 30, Carol: 1*25 = 25
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "Alice");
+    assert!((rows[0].get::<f64>(1).unwrap() - 45.0).abs() < 1e-9);
+    assert_eq!(rows[1].get::<String>(0).unwrap(), "Bob");
+    assert_eq!(rows[2].get::<String>(0).unwrap(), "Carol");
+}
+
+#[test]
+fn self_join_employee_manager_hierarchy() {
+    // Classic self-join: each employee row references a manager row in the same table.
+    // A CTE renames the manager columns to avoid ambiguity caused by the identifier
+    // qualifier stripper, which removes single-letter alias prefixes (e.g. e.col → col).
+    let c = conn();
+    c.execute(
+        "CREATE TABLE emp (emp_id INTEGER, emp_name TEXT, mgr_id INTEGER)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO emp VALUES (1,'CEO',NULL), (2,'VP Eng',1), (3,'VP Sales',1), (4,'Engineer',2)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "WITH mgr AS (
+                SELECT emp_id AS mgr_key, emp_name AS mgr_name FROM emp
+             )
+             SELECT emp_name AS employee, mgr_name AS manager
+             FROM emp
+             INNER JOIN mgr ON mgr_id = mgr_key
+             ORDER BY emp_id",
+            &[],
+        )
+        .unwrap();
+
+    // CEO has no manager → excluded from INNER JOIN result
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "VP Eng");
+    assert_eq!(rows[0].get::<String>(1).unwrap(), "CEO");
+    assert_eq!(rows[1].get::<String>(0).unwrap(), "VP Sales");
+    assert_eq!(rows[2].get::<String>(0).unwrap(), "Engineer");
+    assert_eq!(rows[2].get::<String>(1).unwrap(), "VP Eng");
+}
+
+#[test]
+fn left_join_with_null_check_and_nvl() {
+    // LEFT JOIN preserving unmatched rows; NVL replaces NULL amounts with 0
+    let c = conn();
+    c.execute(
+        "CREATE TABLE acct (acct_id INTEGER, acct_name TEXT)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "CREATE TABLE txn (txn_id INTEGER, txn_acct_id INTEGER, txn_amount REAL)",
+        &[],
+    )
+    .unwrap();
+
+    c.execute(
+        "INSERT INTO acct VALUES (1,'Checking'), (2,'Savings'), (3,'Investment')",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO txn VALUES (1,1,100.0), (2,1,200.0), (3,2,50.0)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT acct_name, NVL(SUM(txn_amount), 0) AS total
+             FROM acct
+             LEFT JOIN txn ON acct_id = txn_acct_id
+             GROUP BY acct_id, acct_name
+             ORDER BY acct_id",
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(rows.len(), 3);
+    assert!((rows[0].get::<f64>(1).unwrap() - 300.0).abs() < 1e-9); // Checking
+    assert!((rows[1].get::<f64>(1).unwrap() - 50.0).abs() < 1e-9);  // Savings
+    assert!((rows[2].get::<f64>(1).unwrap() - 0.0).abs() < 1e-9);   // Investment: no txns
+}
+
+#[test]
+fn cross_join_cartesian_product() {
+    // CROSS JOIN produces every combination of rows
+    let c = conn();
+    c.execute("CREATE TABLE sizes (sz TEXT)", &[]).unwrap();
+    c.execute("CREATE TABLE colors (col TEXT)", &[]).unwrap();
+    c.execute("INSERT INTO sizes VALUES ('S'), ('M'), ('L')", &[]).unwrap();
+    c.execute("INSERT INTO colors VALUES ('Red'), ('Blue')", &[]).unwrap();
+
+    let rows = c
+        .query(
+            "SELECT sz, col FROM sizes CROSS JOIN colors ORDER BY sz, col",
+            &[],
+        )
+        .unwrap();
+
+    // 3 sizes × 2 colors = 6 combinations
+    assert_eq!(rows.len(), 6);
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "L");
+    assert_eq!(rows[0].get::<String>(1).unwrap(), "Blue");
+}
+
+#[test]
+fn join_with_cte() {
+    // CTE pre-filters data; the outer query joins the CTE result with another table
+    let c = conn();
+    c.execute(
+        "CREATE TABLE region (rgn_id INTEGER, rgn_name TEXT)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "CREATE TABLE sale (sale_id INTEGER, sale_rgn_id INTEGER, sale_amount REAL)",
+        &[],
+    )
+    .unwrap();
+
+    c.execute(
+        "INSERT INTO region VALUES (1,'APAC'), (2,'EMEA'), (3,'AMER')",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO sale VALUES (1,1,500.0),(2,1,300.0),(3,2,800.0),(4,3,200.0),(5,3,150.0)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "WITH regional_totals AS (
+                SELECT sale_rgn_id, SUM(sale_amount) AS rgn_total
+                FROM sale
+                GROUP BY sale_rgn_id
+             )
+             SELECT rgn_name, rgn_total
+             FROM region
+             INNER JOIN regional_totals ON rgn_id = sale_rgn_id
+             WHERE rgn_total > 400
+             ORDER BY rgn_total DESC",
+            &[],
+        )
+        .unwrap();
+
+    // APAC: 800, EMEA: 800, AMER: 350 (<= 400 excluded)
+    assert_eq!(rows.len(), 2);
+    let names: Vec<String> = rows.iter().map(|r| r.get(0).unwrap()).collect();
+    let totals: Vec<f64> = rows.iter().map(|r| r.get(1).unwrap()).collect();
+    assert!(names.contains(&"APAC".to_owned()));
+    assert!(names.contains(&"EMEA".to_owned()));
+    // Both passing regions have the same 800.0 total
+    assert!(totals.iter().all(|&t| (t - 800.0).abs() < 1e-9));
+}
+
+#[test]
+fn join_with_subquery_inline_view() {
+    // Join against an inline subquery acting as a derived table
+    let c = conn();
+    c.execute(
+        "CREATE TABLE dept (dept_id INTEGER, dept_name TEXT)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "CREATE TABLE staff (staff_id INTEGER, staff_dept_id INTEGER, staff_salary REAL)",
+        &[],
+    )
+    .unwrap();
+
+    c.execute(
+        "INSERT INTO dept VALUES (1,'Engineering'), (2,'HR'), (3,'Finance')",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO staff VALUES (1,1,90000),(2,1,110000),(3,2,70000),(4,2,75000),(5,3,85000)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT dept_name, avg_sal
+             FROM dept
+             INNER JOIN (
+                 SELECT staff_dept_id, AVG(staff_salary) AS avg_sal
+                 FROM staff
+                 GROUP BY staff_dept_id
+             ) AS dept_avg ON dept_id = staff_dept_id
+             ORDER BY avg_sal DESC",
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(rows.len(), 3);
+    // Engineering avg: 100000, Finance: 85000, HR: 72500
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "Engineering");
+    assert!((rows[0].get::<f64>(1).unwrap() - 100000.0).abs() < 1e-9);
+}
+
+#[test]
+fn join_with_window_function_row_number() {
+    // Use ROW_NUMBER() OVER (PARTITION BY ...) after a JOIN to rank items per category
+    let c = conn();
+    c.execute(
+        "CREATE TABLE cat (cat_id INTEGER, cat_name TEXT)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "CREATE TABLE item (item_id INTEGER, item_cat_id INTEGER, item_score INTEGER)",
+        &[],
+    )
+    .unwrap();
+
+    c.execute(
+        "INSERT INTO cat VALUES (1,'Electronics'), (2,'Books')",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO item VALUES (1,1,95),(2,1,87),(3,1,92),(4,2,78),(5,2,85)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT cat_name, item_id, item_score,
+                    ROW_NUMBER() OVER (PARTITION BY item_cat_id ORDER BY item_score DESC) AS rn
+             FROM cat
+             INNER JOIN item ON cat_id = item_cat_id
+             ORDER BY cat_id, rn",
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(rows.len(), 5);
+    // Electronics top: item 1 (score 95) → rn=1
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "Electronics");
+    assert_eq!(rows[0].get::<i64>(1).unwrap(), 1);
+    assert_eq!(rows[0].get::<i64>(3).unwrap(), 1);
+    // Books top: item 5 (score 85) → rn=1
+    assert_eq!(rows[3].get::<String>(0).unwrap(), "Books");
+    assert_eq!(rows[3].get::<i64>(1).unwrap(), 5);
+    assert_eq!(rows[3].get::<i64>(3).unwrap(), 1);
+}
+
+#[test]
+fn join_with_iff_and_group_by_having() {
+    // JOIN combined with Snowflake IFF() in SELECT and HAVING filtering
+    let c = conn();
+    c.execute(
+        "CREATE TABLE project (proj_id INTEGER, proj_name TEXT, proj_active INTEGER)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "CREATE TABLE effort (eff_id INTEGER, eff_proj_id INTEGER, eff_hours REAL)",
+        &[],
+    )
+    .unwrap();
+
+    c.execute(
+        "INSERT INTO project VALUES (1,'Alpha',1),(2,'Beta',0),(3,'Gamma',1)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO effort VALUES (1,1,40.0),(2,1,20.0),(3,2,80.0),(4,3,15.0),(5,3,25.0)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT proj_name,
+                    IFF(proj_active = 1, 'Active', 'Inactive') AS status,
+                    SUM(eff_hours) AS total_hours
+             FROM project
+             INNER JOIN effort ON proj_id = eff_proj_id
+             GROUP BY proj_id, proj_name, proj_active
+             HAVING SUM(eff_hours) > 30
+             ORDER BY total_hours DESC",
+            &[],
+        )
+        .unwrap();
+
+    // Alpha: 60h (active), Beta: 80h (inactive); Gamma: 40h (active) — all > 30
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "Beta");
+    assert_eq!(rows[0].get::<String>(1).unwrap(), "Inactive");
+    assert!((rows[0].get::<f64>(2).unwrap() - 80.0).abs() < 1e-9);
+    assert_eq!(rows[1].get::<String>(1).unwrap(), "Active");
+}
+
+#[test]
+fn join_with_decode_and_case() {
+    // Snowflake DECODE + CASE WHEN used together after a JOIN
+    let c = conn();
+    c.execute(
+        "CREATE TABLE country (cntry_id INTEGER, cntry_code TEXT)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "CREATE TABLE order2 (o2_id INTEGER, o2_cntry_id INTEGER, o2_amount REAL)",
+        &[],
+    )
+    .unwrap();
+
+    c.execute(
+        "INSERT INTO country VALUES (1,'US'),(2,'UK'),(3,'DE')",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO order2 VALUES (1,1,100.0),(2,1,200.0),(3,2,150.0),(4,3,175.0),(5,3,175.0)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT DECODE(cntry_code,'US','United States','UK','United Kingdom','Other') AS cntry_label,
+                    CASE WHEN SUM(o2_amount) > 200 THEN 'High' ELSE 'Low' END AS vol_tier,
+                    SUM(o2_amount) AS total
+             FROM country
+             INNER JOIN order2 ON cntry_id = o2_cntry_id
+             GROUP BY cntry_id, cntry_code
+             ORDER BY total DESC",
+            &[],
+        )
+        .unwrap();
+
+    // US: 300, DE: 350, UK: 150 → order DESC: DE(350), US(300), UK(150)
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "Other");          // DE: 350
+    assert_eq!(rows[0].get::<String>(1).unwrap(), "High");
+    assert!((rows[0].get::<f64>(2).unwrap() - 350.0).abs() < 1e-9);
+    assert_eq!(rows[1].get::<String>(0).unwrap(), "United States");  // US: 300
+    assert_eq!(rows[1].get::<String>(1).unwrap(), "High");
+    assert_eq!(rows[2].get::<String>(0).unwrap(), "United Kingdom"); // UK: 150
+    assert_eq!(rows[2].get::<String>(1).unwrap(), "Low");
+}
+
+#[test]
+fn join_with_fully_qualified_identifiers() {
+    // Fully-qualified db.schema.table names are stripped to bare table names before execution
+    let c = conn();
+    c.execute("CREATE TABLE warehouse (wh_id INTEGER, wh_location TEXT)", &[])
+        .unwrap();
+    c.execute(
+        "CREATE TABLE inventory (inv_id INTEGER, inv_wh_id INTEGER, inv_units INTEGER)",
+        &[],
+    )
+    .unwrap();
+
+    c.execute(
+        "INSERT INTO warehouse VALUES (1,'NYC'), (2,'LAX')",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO inventory VALUES (1,1,500),(2,1,300),(3,2,700)",
+        &[],
+    )
+    .unwrap();
+
+    // Use three-part identifiers (db.schema.table) that should be stripped
+    let rows = c
+        .query(
+            "SELECT wh_location, SUM(inv_units) AS total_units
+             FROM mydb.public.warehouse
+             INNER JOIN mydb.public.inventory ON wh_id = inv_wh_id
+             GROUP BY wh_id, wh_location
+             ORDER BY total_units DESC",
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "NYC"); // 800
+    assert_eq!(rows[0].get::<i64>(1).unwrap(), 800);
+    assert_eq!(rows[1].get::<String>(0).unwrap(), "LAX"); // 700
+    assert_eq!(rows[1].get::<i64>(1).unwrap(), 700);
+}
+
+#[test]
+fn join_with_listagg() {
+    // LISTAGG aggregation on joined result to produce a comma-separated list per group
+    let c = conn();
+    c.execute(
+        "CREATE TABLE team (team_id INTEGER, team_name TEXT)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "CREATE TABLE player (pl_id INTEGER, pl_team_id INTEGER, pl_name TEXT)",
+        &[],
+    )
+    .unwrap();
+
+    c.execute(
+        "INSERT INTO team VALUES (1,'Alpha'), (2,'Beta')",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO player VALUES (1,1,'Alice'),(2,1,'Bob'),(3,2,'Carol'),(4,2,'Dave'),(5,2,'Eve')",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT team_name, LISTAGG(pl_name, ',') WITHIN GROUP (ORDER BY pl_name) AS roster
+             FROM team
+             INNER JOIN player ON team_id = pl_team_id
+             GROUP BY team_id, team_name
+             ORDER BY team_name",
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(rows.len(), 2);
+    let alpha_roster: String = rows[0].get(1).unwrap();
+    assert!(alpha_roster.contains("Alice") && alpha_roster.contains("Bob"));
+    let beta_roster: String = rows[1].get(1).unwrap();
+    assert!(beta_roster.contains("Carol") && beta_roster.contains("Dave") && beta_roster.contains("Eve"));
+}
+
+#[test]
+fn join_with_dateadd_and_datediff() {
+    // JOIN combined with date arithmetic (DATEADD / DATEDIFF) in SELECT and WHERE
+    let c = conn();
+    c.execute(
+        "CREATE TABLE contract (con_id INTEGER, con_name TEXT, con_start TEXT)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "CREATE TABLE renewal (ren_id INTEGER, ren_con_id INTEGER, ren_date TEXT)",
+        &[],
+    )
+    .unwrap();
+
+    c.execute(
+        "INSERT INTO contract VALUES (1,'ContractA','2023-01-01'),(2,'ContractB','2023-06-01')",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO renewal VALUES (1,1,'2024-01-15'),(2,2,'2024-07-01')",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "SELECT con_name,
+                    DATEDIFF(day, con_start, ren_date)  AS days_to_renewal,
+                    DATEADD(year, 1, ren_date)          AS next_renewal
+             FROM contract
+             INNER JOIN renewal ON con_id = ren_con_id
+             ORDER BY days_to_renewal",
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(rows.len(), 2);
+    // ContractA: 2023-01-01 → 2024-01-15 = 379 days; ContractB: 2023-06-01 → 2024-07-01 = 396 days
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "ContractA");
+    let days_a: f64 = rows[0].get(1).unwrap();
+    assert_eq!(days_a as i64, 379);
+    assert_eq!(rows[0].get::<String>(2).unwrap(), "2025-01-15");
+    assert_eq!(rows[1].get::<String>(0).unwrap(), "ContractB");
+    assert_eq!(rows[1].get::<String>(2).unwrap(), "2025-07-01");
+}
+
+#[test]
+fn multi_cte_join_with_running_window() {
+    // Two CTEs joined together; result enriched with a running SUM window function.
+    // CTE columns are renamed (east_month / west_month) so the JOIN ON and SELECT
+    // references are unambiguous after the qualifier stripper removes table aliases.
+    let c = conn();
+    c.execute(
+        "CREATE TABLE region2 (r2_id INTEGER, r2_name TEXT)",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "CREATE TABLE monthly_sale (ms_id INTEGER, ms_rgn_id INTEGER, ms_month INTEGER, ms_revenue REAL)",
+        &[],
+    )
+    .unwrap();
+
+    c.execute(
+        "INSERT INTO region2 VALUES (1,'East'),(2,'West')",
+        &[],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO monthly_sale VALUES
+            (1,1,1,100.0),(2,1,2,150.0),(3,1,3,200.0),
+            (4,2,1,80.0),(5,2,2,120.0),(6,2,3,160.0)",
+        &[],
+    )
+    .unwrap();
+
+    let rows = c
+        .query(
+            "WITH east_sales AS (
+                SELECT ms_month AS east_month, ms_revenue AS east_rev
+                FROM monthly_sale WHERE ms_rgn_id = 1
+             ),
+             west_sales AS (
+                SELECT ms_month AS west_month, ms_revenue AS west_rev
+                FROM monthly_sale WHERE ms_rgn_id = 2
+             )
+             SELECT east_month,
+                    east_rev,
+                    west_rev,
+                    SUM(east_rev + west_rev)
+                        OVER (ORDER BY east_month
+                              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cum_total
+             FROM east_sales
+             INNER JOIN west_sales ON east_month = west_month
+             ORDER BY east_month",
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(rows.len(), 3);
+    // Month 1: 100+80=180, Month 2: 150+120=270, Month 3: 200+160=360
+    assert!((rows[0].get::<f64>(3).unwrap() - 180.0).abs() < 1e-9); // cum after month 1
+    assert!((rows[1].get::<f64>(3).unwrap() - 450.0).abs() < 1e-9); // cum after month 2
+    assert!((rows[2].get::<f64>(3).unwrap() - 810.0).abs() < 1e-9); // cum after month 3
+}
+
 // ── Unsupported constructs ────────────────────────────────────────────────────
 
 #[test]

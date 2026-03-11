@@ -878,12 +878,9 @@ fn parse_cast_args(s: &str) -> Option<(&str, &str)> {
             b')' if !in_single && !in_double => depth = depth.saturating_sub(1),
             b' ' | b'\t' | b'\n' if depth == 0 && !in_single && !in_double => {
                 // Check if next non-whitespace is "AS "
-                let rest = &s[i..].trim_start();
-                if rest.len() >= 3
-                    && rest.as_bytes()[0].to_ascii_uppercase() == b'A'
-                    && rest.as_bytes()[1].to_ascii_uppercase() == b'S'
-                    && (rest.as_bytes()[2] == b' ' || rest.as_bytes()[2] == b'\t')
-                {
+                let rest = s[i..].trim_start();
+                let rest_lower = rest.to_ascii_lowercase();
+                if rest_lower.starts_with("as ") || rest_lower.starts_with("as\t") {
                     let expr = s[..i].trim();
                     let as_pos = s.len() - rest.len();
                     let type_name = s[as_pos + 3..].trim();

@@ -305,7 +305,7 @@ impl Connection {
         let stage_ref = caps.get(2)?.as_str();
 
         // Strip schema prefix from table name — use the last dotted component.
-        let table = table_raw.split('.').last().unwrap_or(table_raw);
+        let table = table_raw.split('.').next_back().unwrap_or(table_raw);
         let stage_name = normalize_stage_name(stage_ref);
 
         // Only proceed when this stage actually has tracked files.
@@ -379,7 +379,7 @@ fn load_csv_into_table(
         return Ok(0);
     }
 
-    let placeholders = std::iter::repeat("?").take(col_count).collect::<Vec<_>>().join(", ");
+    let placeholders = std::iter::repeat_n("?", col_count).collect::<Vec<_>>().join(", ");
     let insert_sql = format!("INSERT INTO {table} VALUES ({placeholders})");
     let mut stmt = conn.prepare(&insert_sql)?;
 

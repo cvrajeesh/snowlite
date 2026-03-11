@@ -3841,195 +3841,277 @@ fn flatten_returns_descriptive_error() {
 
 // ── Internal stage operations ─────────────────────────────────────────────────
 
+/// Helper: count user-created tables in the SQLite schema.
+fn table_count(c: &snowlite::Connection) -> i64 {
+    c.query(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        &[],
+    )
+    .unwrap()[0]
+        .get(0)
+        .unwrap()
+}
+
 /// CREATE STAGE — basic internal stage creation is a no-op (silently accepted).
+/// Verified by: execute() returns 0 rows affected, no table is created in sqlite_master.
 #[test]
 fn create_internal_stage() {
     let c = conn();
-    c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    let affected = c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    assert_eq!(affected, 0, "CREATE STAGE should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "CREATE STAGE must not create any SQLite tables");
 }
 
 /// CREATE OR REPLACE STAGE — variant with OR REPLACE is also silently ignored.
+/// Verified by: execute() returns 0 rows affected, no table created.
 #[test]
 fn create_or_replace_stage() {
     let c = conn();
-    c.execute("CREATE OR REPLACE STAGE raw_data_stage", &[]).unwrap();
+    let affected = c.execute("CREATE OR REPLACE STAGE raw_data_stage", &[]).unwrap();
+    assert_eq!(affected, 0, "CREATE OR REPLACE STAGE should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "CREATE OR REPLACE STAGE must not create any SQLite tables");
 }
 
 /// CREATE STAGE IF NOT EXISTS — conditional creation is silently ignored.
+/// Verified by: both calls return 0, schema stays empty.
 #[test]
 fn create_stage_if_not_exists() {
     let c = conn();
-    c.execute("CREATE STAGE IF NOT EXISTS my_stage", &[]).unwrap();
-    // Calling again must not error either
-    c.execute("CREATE STAGE IF NOT EXISTS my_stage", &[]).unwrap();
+    let first = c.execute("CREATE STAGE IF NOT EXISTS my_stage", &[]).unwrap();
+    assert_eq!(first, 0, "first CREATE STAGE IF NOT EXISTS should affect 0 rows");
+    let second = c.execute("CREATE STAGE IF NOT EXISTS my_stage", &[]).unwrap();
+    assert_eq!(second, 0, "repeated CREATE STAGE IF NOT EXISTS should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "CREATE STAGE IF NOT EXISTS must not create any SQLite tables");
 }
 
 /// CREATE STAGE with FILE_FORMAT option is silently ignored.
+/// Verified by: execute() returns 0 rows affected, no schema object created.
 #[test]
 fn create_stage_with_file_format() {
     let c = conn();
-    c.execute(
+    let affected = c.execute(
         "CREATE OR REPLACE STAGE csv_stage
             FILE_FORMAT = (TYPE = 'CSV' FIELD_DELIMITER = ',' SKIP_HEADER = 1)",
         &[],
     )
     .unwrap();
+    assert_eq!(affected, 0, "CREATE STAGE with FILE_FORMAT should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "CREATE STAGE with FILE_FORMAT must not create any SQLite tables");
 }
 
 /// CREATE STAGE with COPY_OPTIONS is silently ignored.
+/// Verified by: execute() returns 0 rows affected, no schema object created.
 #[test]
 fn create_stage_with_copy_options() {
     let c = conn();
-    c.execute(
+    let affected = c.execute(
         "CREATE STAGE load_stage
             FILE_FORMAT = (TYPE = 'JSON')
             COPY_OPTIONS = (ON_ERROR = 'CONTINUE')",
         &[],
     )
     .unwrap();
+    assert_eq!(affected, 0, "CREATE STAGE with COPY_OPTIONS should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "CREATE STAGE with COPY_OPTIONS must not create any SQLite tables");
 }
 
 /// CREATE STAGE with a COMMENT clause is silently ignored.
+/// Verified by: execute() returns 0 rows affected, no schema object created.
 #[test]
 fn create_stage_with_comment() {
     let c = conn();
-    c.execute(
+    let affected = c.execute(
         "CREATE STAGE events_stage COMMENT = 'Stage for raw event files'",
         &[],
     )
     .unwrap();
+    assert_eq!(affected, 0, "CREATE STAGE with COMMENT should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "CREATE STAGE with COMMENT must not create any SQLite tables");
 }
 
 /// DROP STAGE is a no-op.
+/// Verified by: both execute() calls return 0, the schema stays empty throughout.
 #[test]
 fn drop_stage() {
     let c = conn();
-    c.execute("CREATE STAGE temp_stage", &[]).unwrap();
-    c.execute("DROP STAGE temp_stage", &[]).unwrap();
+    let create_affected = c.execute("CREATE STAGE temp_stage", &[]).unwrap();
+    assert_eq!(create_affected, 0, "CREATE STAGE should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "CREATE STAGE must not create any SQLite tables");
+    let drop_affected = c.execute("DROP STAGE temp_stage", &[]).unwrap();
+    assert_eq!(drop_affected, 0, "DROP STAGE should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "DROP STAGE must not remove any SQLite tables");
 }
 
-/// DROP STAGE IF EXISTS is a no-op.
+/// DROP STAGE IF EXISTS is a no-op even for a stage that was never created.
+/// Verified by: execute() returns 0 rows affected, schema remains empty.
 #[test]
 fn drop_stage_if_exists() {
     let c = conn();
-    c.execute("DROP STAGE IF EXISTS nonexistent_stage", &[]).unwrap();
+    let affected = c.execute("DROP STAGE IF EXISTS nonexistent_stage", &[]).unwrap();
+    assert_eq!(affected, 0, "DROP STAGE IF EXISTS should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "DROP STAGE IF EXISTS must not alter the SQLite schema");
 }
 
 /// ALTER STAGE SET is a no-op.
+/// Verified by: both execute() calls return 0 and no schema changes occur.
 #[test]
 fn alter_stage_set_comment() {
     let c = conn();
-    c.execute("CREATE STAGE my_stage", &[]).unwrap();
-    c.execute(
+    let create_affected = c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    assert_eq!(create_affected, 0);
+    let alter_affected = c.execute(
         "ALTER STAGE my_stage SET COMMENT = 'updated comment'",
         &[],
     )
     .unwrap();
+    assert_eq!(alter_affected, 0, "ALTER STAGE SET COMMENT should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "ALTER STAGE must not create any SQLite tables");
 }
 
 /// ALTER STAGE SET FILE_FORMAT is a no-op.
+/// Verified by: both execute() calls return 0 and no schema changes occur.
 #[test]
 fn alter_stage_set_file_format() {
     let c = conn();
-    c.execute("CREATE STAGE my_stage", &[]).unwrap();
-    c.execute(
+    let create_affected = c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    assert_eq!(create_affected, 0);
+    let alter_affected = c.execute(
         "ALTER STAGE my_stage SET FILE_FORMAT = (TYPE = 'PARQUET')",
         &[],
     )
     .unwrap();
+    assert_eq!(alter_affected, 0, "ALTER STAGE SET FILE_FORMAT should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "ALTER STAGE must not create any SQLite tables");
 }
 
 /// SHOW STAGES is a no-op.
+/// Verified by: execute() returns 0 rows affected, schema stays clean.
 #[test]
 fn show_stages() {
     let c = conn();
-    c.execute("SHOW STAGES", &[]).unwrap();
+    let affected = c.execute("SHOW STAGES", &[]).unwrap();
+    assert_eq!(affected, 0, "SHOW STAGES should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "SHOW STAGES must not create any SQLite tables");
 }
 
 /// PUT FILE — simulates uploading a local file to an internal stage; silently ignored.
+/// Verified by: both execute() calls return 0, no schema objects created.
 #[test]
 fn put_file_to_stage() {
     let c = conn();
-    c.execute("CREATE STAGE my_stage", &[]).unwrap();
-    c.execute("PUT FILE:///tmp/data.csv @my_stage", &[]).unwrap();
+    let stage_affected = c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    assert_eq!(stage_affected, 0);
+    let put_affected = c.execute("PUT FILE:///tmp/data.csv @my_stage", &[]).unwrap();
+    assert_eq!(put_affected, 0, "PUT FILE should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "PUT FILE must not create any SQLite tables");
 }
 
 /// PUT FILE with options is silently ignored.
+/// Verified by: execute() returns 0 rows affected.
 #[test]
 fn put_file_with_options() {
     let c = conn();
-    c.execute(
+    let affected = c.execute(
         "PUT FILE:///tmp/sales_2024.csv @load_stage AUTO_COMPRESS=TRUE OVERWRITE=TRUE",
         &[],
     )
     .unwrap();
+    assert_eq!(affected, 0, "PUT FILE with options should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "PUT FILE must not create any SQLite tables");
 }
 
 /// PUT FILE with a directory glob is silently ignored.
+/// Verified by: execute() returns 0 rows affected.
 #[test]
 fn put_file_glob() {
     let c = conn();
-    c.execute("PUT FILE:///tmp/data/*.csv @raw_stage", &[]).unwrap();
+    let affected = c.execute("PUT FILE:///tmp/data/*.csv @raw_stage", &[]).unwrap();
+    assert_eq!(affected, 0, "PUT FILE glob should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "PUT FILE glob must not create any SQLite tables");
 }
 
 /// LIST @stage — lists files in a stage; silently ignored.
+/// Verified by: both execute() calls return 0, no schema objects created.
 #[test]
 fn list_stage() {
     let c = conn();
-    c.execute("CREATE STAGE my_stage", &[]).unwrap();
-    c.execute("LIST @my_stage", &[]).unwrap();
+    let stage_affected = c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    assert_eq!(stage_affected, 0);
+    let list_affected = c.execute("LIST @my_stage", &[]).unwrap();
+    assert_eq!(list_affected, 0, "LIST @stage should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "LIST @stage must not create any SQLite tables");
 }
 
 /// LIST @stage with a path filter is silently ignored.
+/// Verified by: execute() returns 0 rows affected.
 #[test]
 fn list_stage_with_path() {
     let c = conn();
-    c.execute("LIST @my_stage/subdir/", &[]).unwrap();
+    let affected = c.execute("LIST @my_stage/subdir/", &[]).unwrap();
+    assert_eq!(affected, 0, "LIST @stage/path should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "LIST @stage/path must not create any SQLite tables");
 }
 
 /// LIST @~ (user stage) is silently ignored.
+/// Verified by: execute() returns 0 rows affected.
 #[test]
 fn list_user_stage() {
     let c = conn();
-    c.execute("LIST @~", &[]).unwrap();
+    let affected = c.execute("LIST @~", &[]).unwrap();
+    assert_eq!(affected, 0, "LIST @~ should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "LIST @~ must not create any SQLite tables");
 }
 
 /// REMOVE @stage/file is silently ignored.
+/// Verified by: both execute() calls return 0, no schema objects created.
 #[test]
 fn remove_file_from_stage() {
     let c = conn();
-    c.execute("CREATE STAGE my_stage", &[]).unwrap();
-    c.execute("REMOVE @my_stage/data.csv.gz", &[]).unwrap();
+    let stage_affected = c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    assert_eq!(stage_affected, 0);
+    let remove_affected = c.execute("REMOVE @my_stage/data.csv.gz", &[]).unwrap();
+    assert_eq!(remove_affected, 0, "REMOVE @stage should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "REMOVE @stage must not create any SQLite tables");
 }
 
 /// REMOVE @stage with pattern is silently ignored.
+/// Verified by: execute() returns 0 rows affected.
 #[test]
 fn remove_stage_with_pattern() {
     let c = conn();
-    c.execute("REMOVE @my_stage PATTERN='.*[.]csv[.]gz'", &[]).unwrap();
+    let affected = c.execute("REMOVE @my_stage PATTERN='.*[.]csv[.]gz'", &[]).unwrap();
+    assert_eq!(affected, 0, "REMOVE @stage with pattern should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "REMOVE @stage with pattern must not create any SQLite tables");
 }
 
 /// GET @stage — downloads a file from a stage; silently ignored.
+/// Verified by: execute() returns 0 rows affected.
 #[test]
 fn get_file_from_stage() {
     let c = conn();
-    c.execute("GET @my_stage/data.csv FILE:///tmp/local/", &[]).unwrap();
+    let affected = c.execute("GET @my_stage/data.csv FILE:///tmp/local/", &[]).unwrap();
+    assert_eq!(affected, 0, "GET @stage should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "GET @stage must not create any SQLite tables");
 }
 
 /// COPY INTO table FROM @stage — loads staged files into a table; silently ignored
 /// (no rows are inserted because this is a testing shim, not a real Snowflake loader).
+/// Verified by: execute() returns 0, table row count stays 0.
 #[test]
 fn copy_into_table_from_stage() {
     let c = conn();
     c.execute("CREATE TABLE sales (id INTEGER, amount REAL)", &[]).unwrap();
-    c.execute("CREATE STAGE my_stage", &[]).unwrap();
-    c.execute("COPY INTO sales FROM @my_stage", &[]).unwrap();
+    let stage_affected = c.execute("CREATE STAGE my_stage", &[]).unwrap();
+    assert_eq!(stage_affected, 0, "CREATE STAGE should affect 0 rows");
+    let copy_affected = c.execute("COPY INTO sales FROM @my_stage", &[]).unwrap();
+    assert_eq!(copy_affected, 0, "COPY INTO from stage should affect 0 rows");
     // COPY INTO is a no-op: the table must remain empty
     let rows = c.query("SELECT COUNT(*) FROM sales", &[]).unwrap();
     assert_eq!(rows[0].get::<i64>(0).unwrap(), 0);
 }
 
 /// COPY INTO with FILE_FORMAT and ON_ERROR options is silently ignored.
+/// Verified by: execute() returns 0, table row count stays 0.
 #[test]
 fn copy_into_table_from_stage_with_options() {
     let c = conn();
@@ -4038,48 +4120,54 @@ fn copy_into_table_from_stage_with_options() {
         &[],
     )
     .unwrap();
-    c.execute(
+    let affected = c.execute(
         "COPY INTO events FROM @raw_stage
             FILE_FORMAT = (TYPE = 'JSON' STRIP_OUTER_ARRAY = TRUE)
             ON_ERROR = 'CONTINUE'",
         &[],
     )
     .unwrap();
+    assert_eq!(affected, 0, "COPY INTO with options should affect 0 rows");
     let rows = c.query("SELECT COUNT(*) FROM events", &[]).unwrap();
     assert_eq!(rows[0].get::<i64>(0).unwrap(), 0);
 }
 
 /// COPY INTO with a specific file path inside the stage is silently ignored.
+/// Verified by: execute() returns 0, table row count stays 0.
 #[test]
 fn copy_into_table_from_stage_file_path() {
     let c = conn();
     c.execute("CREATE TABLE orders (id INTEGER, total REAL)", &[]).unwrap();
-    c.execute(
+    let affected = c.execute(
         "COPY INTO orders FROM @load_stage/orders/2024-01.csv",
         &[],
     )
     .unwrap();
+    assert_eq!(affected, 0, "COPY INTO from stage file path should affect 0 rows");
     let rows = c.query("SELECT COUNT(*) FROM orders", &[]).unwrap();
     assert_eq!(rows[0].get::<i64>(0).unwrap(), 0);
 }
 
 /// COPY INTO with column mapping is silently ignored.
+/// Verified by: execute() returns 0, table row count stays 0.
 #[test]
 fn copy_into_table_with_column_mapping() {
     let c = conn();
     c.execute("CREATE TABLE products (sku TEXT, name TEXT, price REAL)", &[]).unwrap();
-    c.execute(
+    let affected = c.execute(
         "COPY INTO products (sku, name, price)
             FROM (SELECT $1, $2, $3::REAL FROM @product_stage)
             FILE_FORMAT = (TYPE = 'CSV' SKIP_HEADER = 1)",
         &[],
     )
     .unwrap();
+    assert_eq!(affected, 0, "COPY INTO with column mapping should affect 0 rows");
     let rows = c.query("SELECT COUNT(*) FROM products", &[]).unwrap();
     assert_eq!(rows[0].get::<i64>(0).unwrap(), 0);
 }
 
 /// COPY INTO @stage FROM table (outbound/unloading) is silently ignored.
+/// Verified by: execute() returns 0, source table data is unaffected.
 #[test]
 fn copy_into_stage_from_table() {
     let c = conn();
@@ -4089,13 +4177,15 @@ fn copy_into_stage_from_table() {
         &[],
     )
     .unwrap();
-    c.execute("COPY INTO @output_stage FROM reports", &[]).unwrap();
+    let affected = c.execute("COPY INTO @output_stage FROM reports", &[]).unwrap();
+    assert_eq!(affected, 0, "COPY INTO @stage from table should affect 0 rows");
     // Source table data must be unaffected
     let rows = c.query("SELECT COUNT(*) FROM reports", &[]).unwrap();
     assert_eq!(rows[0].get::<i64>(0).unwrap(), 2);
 }
 
 /// COPY INTO @stage with query and format options (outbound) is silently ignored.
+/// Verified by: execute() returns 0, source table data is unaffected.
 #[test]
 fn copy_into_stage_from_query() {
     let c = conn();
@@ -4105,7 +4195,7 @@ fn copy_into_stage_from_query() {
         &[],
     )
     .unwrap();
-    c.execute(
+    let affected = c.execute(
         "COPY INTO @export_stage/sales_export.csv
             FROM (SELECT region, total FROM sales WHERE total > 500)
             FILE_FORMAT = (TYPE = 'CSV' HEADER = TRUE)
@@ -4113,6 +4203,7 @@ fn copy_into_stage_from_query() {
         &[],
     )
     .unwrap();
+    assert_eq!(affected, 0, "COPY INTO @stage from query should affect 0 rows");
     let rows = c.query("SELECT COUNT(*) FROM sales", &[]).unwrap();
     assert_eq!(rows[0].get::<i64>(0).unwrap(), 2);
 }
@@ -4219,21 +4310,30 @@ fn stage_round_trip_no_errors() {
     assert_eq!(rows[0].get::<i64>(0).unwrap(), 0);
 }
 
-/// Repeated CREATE STAGE with OR REPLACE must not cause any error.
+/// Repeated CREATE STAGE with OR REPLACE must not cause any error and always returns 0.
+/// Verified by: each call returns 0 rows affected.
 #[test]
 fn create_or_replace_stage_idempotent() {
     let c = conn();
-    for _ in 0..3 {
-        c.execute("CREATE OR REPLACE STAGE idempotent_stage", &[]).unwrap();
+    for i in 0..3 {
+        let affected = c.execute("CREATE OR REPLACE STAGE idempotent_stage", &[]).unwrap();
+        assert_eq!(affected, 0, "iteration {i}: CREATE OR REPLACE STAGE should affect 0 rows");
     }
+    assert_eq!(table_count(&c), 0, "repeated CREATE OR REPLACE STAGE must not create any SQLite tables");
 }
 
 /// Schema-qualified stage names are handled as no-ops.
+/// Verified by: all execute() calls return 0 rows affected.
 #[test]
 fn qualified_stage_name() {
     let c = conn();
-    c.execute("CREATE STAGE mydb.public.my_stage", &[]).unwrap();
-    c.execute("PUT FILE:///tmp/data.csv @mydb.public.my_stage", &[]).unwrap();
-    c.execute("COPY INTO mydb.public.sales FROM @mydb.public.my_stage", &[]).unwrap();
-    c.execute("DROP STAGE mydb.public.my_stage", &[]).unwrap();
+    let a = c.execute("CREATE STAGE mydb.public.my_stage", &[]).unwrap();
+    assert_eq!(a, 0, "CREATE STAGE with qualified name should affect 0 rows");
+    let b = c.execute("PUT FILE:///tmp/data.csv @mydb.public.my_stage", &[]).unwrap();
+    assert_eq!(b, 0, "PUT FILE with qualified stage name should affect 0 rows");
+    let d = c.execute("COPY INTO mydb.public.sales FROM @mydb.public.my_stage", &[]).unwrap();
+    assert_eq!(d, 0, "COPY INTO with qualified stage name should affect 0 rows");
+    let e = c.execute("DROP STAGE mydb.public.my_stage", &[]).unwrap();
+    assert_eq!(e, 0, "DROP STAGE with qualified name should affect 0 rows");
+    assert_eq!(table_count(&c), 0, "qualified stage commands must not create any SQLite tables");
 }

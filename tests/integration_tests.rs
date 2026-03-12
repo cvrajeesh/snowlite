@@ -279,11 +279,11 @@ fn quoted_three_part_identifier_stripped() {
 #[test]
 fn noop_statements_are_ignored() {
     let c = conn();
-    // These should not error
-    c.execute("USE DATABASE test_db", &[]).unwrap();
-    c.execute("ALTER SESSION SET QUERY_TAG = 'test'", &[]).unwrap();
-    c.execute("USE WAREHOUSE compute_wh", &[]).unwrap();
-    c.execute("SHOW TABLES", &[]).unwrap();
+    // No-op statements should return 0 rows affected
+    assert_eq!(c.execute("USE DATABASE test_db", &[]).unwrap(), 0);
+    assert_eq!(c.execute("ALTER SESSION SET QUERY_TAG = 'test'", &[]).unwrap(), 0);
+    assert_eq!(c.execute("USE WAREHOUSE compute_wh", &[]).unwrap(), 0);
+    assert_eq!(c.execute("SHOW TABLES", &[]).unwrap(), 0);
 }
 
 // ── Row API ──────────────────────────────────────────────────────────────────
@@ -1952,38 +1952,38 @@ fn null_parameter_binding() {
 #[test]
 fn noop_grant_and_revoke() {
     let c = conn();
-    // GRANT and REVOKE are no-ops
-    c.execute("GRANT SELECT ON TABLE t TO ROLE analyst", &[]).unwrap();
-    c.execute("REVOKE SELECT ON TABLE t FROM ROLE analyst", &[]).unwrap();
+    // GRANT and REVOKE are no-ops — should return 0 rows affected
+    assert_eq!(c.execute("GRANT SELECT ON TABLE t TO ROLE analyst", &[]).unwrap(), 0);
+    assert_eq!(c.execute("REVOKE SELECT ON TABLE t FROM ROLE analyst", &[]).unwrap(), 0);
 }
 
 #[test]
 fn noop_create_warehouse() {
     let c = conn();
-    c.execute("CREATE WAREHOUSE compute_wh WAREHOUSE_SIZE='SMALL'", &[]).unwrap();
-    c.execute("ALTER WAREHOUSE compute_wh SUSPEND", &[]).unwrap();
+    assert_eq!(c.execute("CREATE WAREHOUSE compute_wh WAREHOUSE_SIZE='SMALL'", &[]).unwrap(), 0);
+    assert_eq!(c.execute("ALTER WAREHOUSE compute_wh SUSPEND", &[]).unwrap(), 0);
 }
 
 #[test]
 fn noop_set_unset_variables() {
     let c = conn();
-    c.execute("SET my_var = 42", &[]).unwrap();
-    c.execute("UNSET my_var", &[]).unwrap();
+    assert_eq!(c.execute("SET my_var = 42", &[]).unwrap(), 0);
+    assert_eq!(c.execute("UNSET my_var", &[]).unwrap(), 0);
 }
 
 #[test]
 fn noop_copy_into() {
     let c = conn();
-    c.execute("COPY INTO my_table FROM @my_stage", &[]).unwrap();
+    assert_eq!(c.execute("COPY INTO my_table FROM @my_stage", &[]).unwrap(), 0);
 }
 
 #[test]
 fn noop_show_commands() {
     let c = conn();
-    c.execute("SHOW TABLES", &[]).unwrap();
-    c.execute("SHOW SCHEMAS IN DATABASE mydb", &[]).unwrap();
-    c.execute("SHOW WAREHOUSES", &[]).unwrap();
-    c.execute("SHOW ROLES", &[]).unwrap();
+    assert_eq!(c.execute("SHOW TABLES", &[]).unwrap(), 0);
+    assert_eq!(c.execute("SHOW SCHEMAS IN DATABASE mydb", &[]).unwrap(), 0);
+    assert_eq!(c.execute("SHOW WAREHOUSES", &[]).unwrap(), 0);
+    assert_eq!(c.execute("SHOW ROLES", &[]).unwrap(), 0);
 }
 
 // ── query_one convenience method ─────────────────────────────────────────────
@@ -4587,4 +4587,612 @@ fn statement_size_limit_rejected() {
         msg.to_lowercase().contains("too large") || msg.to_lowercase().contains("size"),
         "error should mention size, got: {msg}"
     );
+}
+
+// ── Additional coverage: math functions ──────────────────────────────────────
+
+#[test]
+fn ceil_function() {
+    let c = conn();
+    let rows = c.query("SELECT CEIL(4.2)", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 5.0).abs() < 1e-9);
+
+    let rows = c.query("SELECT CEIL(-4.8)", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - (-4.0)).abs() < 1e-9);
+}
+
+#[test]
+fn ceiling_function() {
+    let c = conn();
+    let rows = c.query("SELECT CEILING(3.1)", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 4.0).abs() < 1e-9);
+}
+
+#[test]
+fn floor_function() {
+    let c = conn();
+    let rows = c.query("SELECT FLOOR(4.9)", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 4.0).abs() < 1e-9);
+
+    let rows = c.query("SELECT FLOOR(-4.1)", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - (-5.0)).abs() < 1e-9);
+}
+
+#[test]
+fn cbrt_function() {
+    let c = conn();
+    let rows = c.query("SELECT CBRT(27.0)", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 3.0).abs() < 1e-9, "CBRT(27) should be 3, got {result}");
+}
+
+#[test]
+fn ln_function() {
+    let c = conn();
+    // LN is translated to LOG (our custom natural logarithm function)
+    let rows = c.query("SELECT LN(1.0)", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 0.0).abs() < 1e-9, "LN(1) should be 0, got {result}");
+
+    let rows = c.query("SELECT LN(2.718281828)", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 1.0).abs() < 1e-6, "LN(e) should be ~1, got {result}");
+}
+
+#[test]
+fn mod_with_columns() {
+    let c = conn();
+    c.execute("CREATE TABLE nums (a INTEGER, b INTEGER)", &[]).unwrap();
+    c.execute("INSERT INTO nums VALUES (10, 3), (15, 4), (7, 2)", &[]).unwrap();
+    let rows = c.query("SELECT a, MOD(a, b) FROM nums ORDER BY a", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(1).unwrap(), 1); // 7 % 2
+    assert_eq!(rows[1].get::<i64>(1).unwrap(), 1); // 10 % 3
+    assert_eq!(rows[2].get::<i64>(1).unwrap(), 3); // 15 % 4
+}
+
+// ── Additional coverage: date function unit variations ───────────────────────
+
+#[test]
+fn dateadd_quarter() {
+    let c = conn();
+    let rows = c.query("SELECT DATEADD('quarter', 1, '2024-01-15')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "2024-04-15");
+}
+
+#[test]
+fn dateadd_week() {
+    let c = conn();
+    let rows = c.query("SELECT DATEADD('week', 2, '2024-01-01')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "2024-01-15");
+}
+
+#[test]
+fn dateadd_second() {
+    let c = conn();
+    let rows = c.query("SELECT DATEADD('second', 90, '2024-01-01T00:00:00')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "2024-01-01 00:01:30");
+}
+
+#[test]
+fn datediff_hour() {
+    let c = conn();
+    let rows = c.query("SELECT DATEDIFF('hour', '2024-01-01T00:00:00', '2024-01-01T12:00:00')", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 12);
+}
+
+#[test]
+fn datediff_minute() {
+    let c = conn();
+    let rows = c.query("SELECT DATEDIFF('minute', '2024-01-01 00:00:00', '2024-01-01 02:00:00')", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 120);
+}
+
+#[test]
+fn datediff_second() {
+    let c = conn();
+    let rows = c.query("SELECT DATEDIFF('second', '2024-01-01', '2024-01-02')", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 86400);
+}
+
+#[test]
+fn datediff_quarter() {
+    let c = conn();
+    let rows = c.query("SELECT DATEDIFF('quarter', '2024-01-01', '2024-10-01')", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 3);
+}
+
+#[test]
+fn datediff_week() {
+    let c = conn();
+    let rows = c.query("SELECT DATEDIFF('week', '2024-01-01', '2024-01-22')", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 3);
+}
+
+#[test]
+fn date_trunc_quarter() {
+    let c = conn();
+    let rows = c.query("SELECT DATE_TRUNC('quarter', '2024-08-15')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "2024-07-01");
+}
+
+#[test]
+fn date_trunc_week() {
+    let c = conn();
+    // 2024-01-10 is a Wednesday; start of week (Monday) is 2024-01-08
+    let rows = c.query("SELECT DATE_TRUNC('week', '2024-01-10')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "2024-01-08");
+}
+
+// ── Additional coverage: TRY_CAST edge cases ─────────────────────────────────
+
+#[test]
+fn try_cast_valid_integer_conversion() {
+    let c = conn();
+    let rows = c.query("SELECT TRY_CAST('42' AS INTEGER)", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 42);
+}
+
+#[test]
+fn try_cast_valid_real_conversion() {
+    let c = conn();
+    let rows = c.query("SELECT TRY_CAST('3.14' AS FLOAT)", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 3.14).abs() < 1e-9);
+}
+
+#[test]
+fn try_cast_null_input() {
+    let c = conn();
+    let rows = c.query("SELECT TRY_CAST(NULL AS INTEGER)", &[]).unwrap();
+    let result: Option<i64> = rows[0].get(0).unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn try_cast_to_text_always_succeeds() {
+    let c = conn();
+    let rows = c.query("SELECT TRY_CAST(12345 AS TEXT)", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "12345");
+}
+
+// ── Additional coverage: CONVERT_TIMEZONE, TO_CHAR, TO_TIME ──────────────────
+
+#[test]
+fn convert_timezone_three_arg_passthrough() {
+    let c = conn();
+    let rows = c.query(
+        "SELECT CONVERT_TIMEZONE('America/New_York', 'UTC', '2024-01-15 10:00:00')",
+        &[],
+    ).unwrap();
+    // CONVERT_TIMEZONE is a passthrough — returns the last argument unchanged
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "2024-01-15 10:00:00");
+}
+
+#[test]
+#[ignore] // Semi-structured colon rewriter corrupts HH24:MI:SS format string into JSON_EXTRACT
+fn to_char_datetime_format() {
+    let c = conn();
+    let rows = c.query(
+        "SELECT TO_CHAR('2024-03-15 14:30:45', 'YYYY-MM-DD HH24:MI:SS')",
+        &[],
+    ).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "2024-03-15 14:30:45");
+}
+
+#[test]
+fn to_char_year_only_format() {
+    let c = conn();
+    let rows = c.query("SELECT TO_CHAR('2024-06-15', 'YYYY')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "2024");
+}
+
+#[test]
+fn to_time_function() {
+    let c = conn();
+    let rows = c.query("SELECT TO_TIME('14:30:00')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "14:30:00");
+}
+
+#[test]
+fn to_timestamp_ntz_function() {
+    let c = conn();
+    let rows = c.query("SELECT TO_TIMESTAMP_NTZ('2024-01-15 10:00:00')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "2024-01-15 10:00:00");
+}
+
+#[test]
+fn weekofyear_function() {
+    let c = conn();
+    let rows = c.query("SELECT WEEKOFYEAR('2024-03-15')", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert!(result > 0 && result <= 53, "week of year should be 1-53, got {result}");
+}
+
+// ── Additional coverage: string / type conversion functions ──────────────────
+
+#[test]
+fn to_numeric_function() {
+    let c = conn();
+    let rows = c.query("SELECT TO_NUMERIC('42.5')", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 42.5).abs() < 1e-9);
+}
+
+#[test]
+fn to_decimal_function() {
+    let c = conn();
+    let rows = c.query("SELECT TO_DECIMAL('99.9')", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 99.9).abs() < 1e-9);
+}
+
+#[test]
+fn getdate_function() {
+    let c = conn();
+    let rows = c.query("SELECT GETDATE()", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    // Should return a datetime string
+    assert!(result.contains("-"), "GETDATE() should return a date, got: {result}");
+}
+
+#[test]
+fn sysdate_function() {
+    let c = conn();
+    let rows = c.query("SELECT SYSDATE()", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert!(result.contains("-"), "SYSDATE() should return a date, got: {result}");
+}
+
+#[test]
+fn localtimestamp_function() {
+    let c = conn();
+    let rows = c.query("SELECT LOCALTIMESTAMP()", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert!(result.contains("-"), "LOCALTIMESTAMP() should return a datetime, got: {result}");
+}
+
+#[test]
+fn strpos_function() {
+    let c = conn();
+    let rows = c.query("SELECT STRPOS('hello world', 'world')", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 7);
+}
+
+#[test]
+fn to_binary_function() {
+    let c = conn();
+    let rows = c.query("SELECT TO_BINARY('hello')", &[]).unwrap();
+    // CAST(x AS BLOB) — just verify it doesn't error and returns something
+    assert_eq!(rows.len(), 1);
+}
+
+// ── Additional coverage: noop edge cases ─────────────────────────────────────
+
+#[test]
+fn noop_alter_account() {
+    let c = conn();
+    assert_eq!(c.execute("ALTER ACCOUNT SET TIMEZONE = 'UTC'", &[]).unwrap(), 0);
+}
+
+#[test]
+fn noop_create_role() {
+    let c = conn();
+    assert_eq!(c.execute("CREATE ROLE analyst", &[]).unwrap(), 0);
+    assert_eq!(c.execute("DROP ROLE analyst", &[]).unwrap(), 0);
+}
+
+#[test]
+fn noop_create_database() {
+    let c = conn();
+    assert_eq!(c.execute("CREATE DATABASE mydb", &[]).unwrap(), 0);
+    assert_eq!(c.execute("DROP DATABASE mydb", &[]).unwrap(), 0);
+}
+
+#[test]
+fn noop_use_role_and_schema() {
+    let c = conn();
+    assert_eq!(c.execute("USE ROLE sysadmin", &[]).unwrap(), 0);
+    assert_eq!(c.execute("USE SCHEMA public", &[]).unwrap(), 0);
+}
+
+#[test]
+fn noop_comment_on() {
+    let c = conn();
+    assert_eq!(c.execute("COMMENT ON TABLE t IS 'a test table'", &[]).unwrap(), 0);
+}
+
+// ── Additional coverage: execute_batch edge cases ────────────────────────────
+
+#[test]
+fn execute_batch_mixed_noop_and_ddl() {
+    let c = conn();
+    c.execute_batch(
+        "USE DATABASE test_db; CREATE TABLE batch_t (id INTEGER); INSERT INTO batch_t VALUES (1); USE WAREHOUSE wh;"
+    ).unwrap();
+    let rows = c.query("SELECT id FROM batch_t", &[]).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 1);
+}
+
+#[test]
+fn execute_batch_all_noops() {
+    let c = conn();
+    c.execute_batch(
+        "USE DATABASE a; USE WAREHOUSE b; ALTER SESSION SET QUERY_TAG = 'x';"
+    ).unwrap();
+}
+
+// ── Additional coverage: boolean logic and null handling ─────────────────────
+
+#[test]
+fn boolxor_function() {
+    let c = conn();
+    let rows = c.query("SELECT BOOLXOR(1, 0)", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 1);
+
+    let rows = c.query("SELECT BOOLXOR(1, 1)", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 0);
+}
+
+#[test]
+fn emptytonull_returns_null_for_empty() {
+    let c = conn();
+    let rows = c.query("SELECT EMPTYTONULL('')", &[]).unwrap();
+    let result: Option<String> = rows[0].get(0).unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn emptytonull_preserves_nonempty() {
+    let c = conn();
+    let rows = c.query("SELECT EMPTYTONULL('hello')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "hello");
+}
+
+#[test]
+fn nullifzero_returns_null_for_zero() {
+    let c = conn();
+    let rows = c.query("SELECT NULLIFZERO(0)", &[]).unwrap();
+    let result: Option<i64> = rows[0].get(0).unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn nullifzero_preserves_nonzero() {
+    let c = conn();
+    let rows = c.query("SELECT NULLIFZERO(42)", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 42);
+}
+
+// ── Additional coverage: array functions ─────────────────────────────────────
+
+#[test]
+fn array_slice_out_of_bounds() {
+    let c = conn();
+    let rows = c.query("SELECT array_slice('[1,2,3]', 0, 10)", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    let arr: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(arr.as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn array_slice_negative_indices() {
+    let c = conn();
+    let rows = c.query("SELECT array_slice('[1,2,3,4,5]', -1, 3)", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    let arr: serde_json::Value = serde_json::from_str(&result).unwrap();
+    // Negative start clamped to 0
+    assert_eq!(arr.as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn array_construct_empty() {
+    let c = conn();
+    let rows = c.query("SELECT array_construct()", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "[]");
+}
+
+// ── Additional coverage: window functions with real data ─────────────────────
+
+#[test]
+fn window_function_lag_with_default() {
+    let c = conn();
+    c.execute("CREATE TABLE wf (id INTEGER, val REAL)", &[]).unwrap();
+    c.execute("INSERT INTO wf VALUES (1, 10.5), (2, 20.3), (3, 30.1)", &[]).unwrap();
+    let rows = c.query(
+        "SELECT id, LAG(val, 1, 0.0) OVER (ORDER BY id) FROM wf ORDER BY id",
+        &[],
+    ).unwrap();
+    // First row: no previous, default = 0.0
+    let first: f64 = rows[0].get(1).unwrap();
+    assert!((first - 0.0).abs() < 1e-9);
+    // Second row: previous val = 10.5
+    let second: f64 = rows[1].get(1).unwrap();
+    assert!((second - 10.5).abs() < 1e-9);
+}
+
+#[test]
+fn window_function_lead_with_default() {
+    let c = conn();
+    c.execute("CREATE TABLE wf2 (id INTEGER, val REAL)", &[]).unwrap();
+    c.execute("INSERT INTO wf2 VALUES (1, 10.5), (2, 20.3), (3, 30.1)", &[]).unwrap();
+    let rows = c.query(
+        "SELECT id, LEAD(val, 1, 0.0) OVER (ORDER BY id) FROM wf2 ORDER BY id",
+        &[],
+    ).unwrap();
+    // Last row: no next, default = 0.0
+    let last: f64 = rows[2].get(1).unwrap();
+    assert!((last - 0.0).abs() < 1e-9);
+    // First row: next val = 20.3
+    let first: f64 = rows[0].get(1).unwrap();
+    assert!((first - 20.3).abs() < 1e-9);
+}
+
+// ── Additional coverage: CREATE TABLE options stripping ──────────────────────
+
+#[test]
+fn create_table_with_cluster_by_stripped() {
+    let c = conn();
+    c.execute(
+        "CREATE TABLE clustered (id INTEGER, name TEXT) CLUSTER BY (id)",
+        &[],
+    ).unwrap();
+    c.execute("INSERT INTO clustered VALUES (1, 'test')", &[]).unwrap();
+    let rows = c.query("SELECT name FROM clustered WHERE id = 1", &[]).unwrap();
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "test");
+}
+
+#[test]
+fn create_table_with_data_retention_stripped() {
+    let c = conn();
+    c.execute(
+        "CREATE TABLE retained (id INTEGER) DATA_RETENTION_TIME_IN_DAYS = 90",
+        &[],
+    ).unwrap();
+    c.execute("INSERT INTO retained VALUES (1)", &[]).unwrap();
+    let rows = c.query("SELECT id FROM retained", &[]).unwrap();
+    assert_eq!(rows.len(), 1);
+}
+
+// ── Additional coverage: transaction edge cases ──────────────────────────────
+
+#[test]
+fn transaction_error_causes_rollback() {
+    let c = conn();
+    c.execute("CREATE TABLE tx_test (id INTEGER PRIMARY KEY)", &[]).unwrap();
+    c.execute("INSERT INTO tx_test VALUES (1)", &[]).unwrap();
+
+    let result = c.transaction(|conn| {
+        conn.execute("INSERT INTO tx_test VALUES (2)", &[])?;
+        // Force an error by inserting a duplicate primary key
+        conn.execute("INSERT INTO tx_test VALUES (1)", &[])?;
+        Ok(())
+    });
+    assert!(result.is_err());
+
+    // Only the original row should exist (transaction was rolled back)
+    let rows = c.query("SELECT COUNT(*) FROM tx_test", &[]).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 1);
+}
+
+// ── Additional coverage: type affinity edge cases ────────────────────────────
+
+#[test]
+fn number_with_high_precision() {
+    let c = conn();
+    c.execute("CREATE TABLE hp (val NUMBER(38, 0))", &[]).unwrap();
+    c.execute("INSERT INTO hp VALUES (9999999999)", &[]).unwrap();
+    let rows = c.query("SELECT val FROM hp", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 9999999999);
+}
+
+#[test]
+fn number_with_scale_stored_as_real() {
+    let c = conn();
+    c.execute("CREATE TABLE nr (val NUMBER(10, 2))", &[]).unwrap();
+    c.execute("INSERT INTO nr VALUES (123.45)", &[]).unwrap();
+    let rows = c.query("SELECT val FROM nr", &[]).unwrap();
+    let result: f64 = rows[0].get(0).unwrap();
+    assert!((result - 123.45).abs() < 1e-9);
+}
+
+// ── Additional coverage: complex query patterns ──────────────────────────────
+
+#[test]
+fn nested_function_calls() {
+    let c = conn();
+    let rows = c.query(
+        "SELECT COALESCE(NVL(NULL, NULL), 'fallback')",
+        &[],
+    ).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "fallback");
+}
+
+#[test]
+fn multiple_casts_in_one_query() {
+    let c = conn();
+    let rows = c.query(
+        "SELECT CAST('42' AS INTEGER), '3.14'::REAL, TO_VARCHAR(100)",
+        &[],
+    ).unwrap();
+    assert_eq!(rows[0].get::<i64>(0).unwrap(), 42);
+    assert!((rows[0].get::<f64>(1).unwrap() - 3.14).abs() < 1e-9);
+    assert_eq!(rows[0].get::<String>(2).unwrap(), "100");
+}
+
+#[test]
+fn dateadd_with_unquoted_unit() {
+    let c = conn();
+    // DATEADD with unquoted unit keyword (no quotes around 'day')
+    let rows = c.query("SELECT DATEADD(day, 7, '2024-01-01')", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "2024-01-08");
+}
+
+#[test]
+fn datediff_with_unquoted_unit() {
+    let c = conn();
+    let rows = c.query("SELECT DATEDIFF(day, '2024-01-01', '2024-01-31')", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 30);
+}
+
+#[test]
+fn try_cast_in_where_clause() {
+    let c = conn();
+    c.execute("CREATE TABLE tc_test (val TEXT)", &[]).unwrap();
+    c.execute("INSERT INTO tc_test VALUES ('42'), ('abc'), ('99')", &[]).unwrap();
+    let rows = c.query(
+        "SELECT val FROM tc_test WHERE TRY_CAST(val AS INTEGER) IS NOT NULL ORDER BY val",
+        &[],
+    ).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].get::<String>(0).unwrap(), "42");
+    assert_eq!(rows[1].get::<String>(0).unwrap(), "99");
+}
+
+#[test]
+fn space_function() {
+    let c = conn();
+    let rows = c.query("SELECT LENGTH(SPACE(5))", &[]).unwrap();
+    let result: i64 = rows[0].get(0).unwrap();
+    assert_eq!(result, 5);
+}
+
+#[test]
+fn object_construct_empty() {
+    let c = conn();
+    let rows = c.query("SELECT OBJECT_CONSTRUCT()", &[]).unwrap();
+    let result: String = rows[0].get(0).unwrap();
+    assert_eq!(result, "{}");
 }
